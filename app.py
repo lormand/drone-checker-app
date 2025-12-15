@@ -290,12 +290,19 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
             return [f'background-color: #ccffcc; {DARK_TEXT_COLOR}'] * len(s) 
 
     # 3. Apply the styling
-    # --- FIX APPLIED HERE: Hiding the Pandas index (row numbers) ---
+    # Define a style for the table header (thead)
+    header_styles = [
+        {'selector': 'thead', 
+         'props': [('background-color', '#555555'), 
+                   ('color', '#FFFFFF'),
+                   ('font-weight', 'bold')]}
+    ]
+    
+    # Apply all styling: hide index, set row properties, apply header style, and convert to HTML
     styled_df = df.style.apply(color_status, axis=1).hide(axis="index").set_properties(
         **{'font-size': '14pt', 'padding': '8px'} 
-    ).to_html() 
-    # ----------------------------------------------------------------
-
+    ).set_table_styles(header_styles).to_html() 
+    
     # 4. Manually insert the tooltip (<abbr> tag) into the HTML
     ADJUSTED_TITLE_HTML = "title='The raw wind speed is increased by 25% (x1.25) to account for wind shear and increased turbulence at altitude (400ft AGL). This provides a critical safety buffer.'"
     
