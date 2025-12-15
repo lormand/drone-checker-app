@@ -273,20 +273,17 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
     
     # 2. Define the styling function
     def color_status(s):
-        """Applies red or green background based on the 'Pass/Fail' column."""
+        """Applies red or no background color based on the 'Pass/Fail' column."""
         DARK_TEXT_COLOR = 'color: #31333F' 
         
         status = s['Pass/Fail']
         
         if status == 'FAIL':
-            # FAIL (Red background, dark text)
+            # FAIL (Red background, dark text) - The only colored row
             return [f'background-color: #ffcccc; {DARK_TEXT_COLOR}'] * len(s) 
-        elif status == 'Info':
-            # Info rows: No color for uniformity as non-Go/No-Go items
-            return [''] * len(s) 
         else:
-            # PASS (Green background, dark text)
-            return [f'background-color: #ccffcc; {DARK_TEXT_COLOR}'] * len(s) 
+            # PASS and Info rows: Default/No color for complete visual uniformity
+            return [''] * len(s) 
 
     # 3. Apply the styling
     # Define a style for the table header (thead)
