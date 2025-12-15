@@ -17,8 +17,7 @@ LIMITS = {
     'MAX_PRECIP_PROB': 0,           # 0% (No water resistance)
     'MAX_KP_INDEX': 5.0,            # Geomagnetic storm threshold (affects GPS lock)
     'WIND_SAFETY_BUFFER': 1.25,     # Safety factor for ground wind at altitude
-    'MAX_CLOUD_COVER': 95,          # Max cloud cover for visual line of sight (VLoS)
-    'MIN_CLOUD_BASE_FT': 900        # Min cloud base height (AGL) to allow full 400ft flight ceiling (400ft + 500ft buffer)
+    'MIN_CLOUD_BASE_FT': 900        # Min cloud base height (AGL) to allow full 400ft flight ceiling (400ft max + 500ft buffer)
 }
 
 # NOTE: Set your local timezone for accurate daylight calculations!
@@ -140,7 +139,7 @@ def fetch_hourly_forecast(forecast_url):
             'visibility_miles': visibility_miles,
             'precip_prob': float(precip_prob),
             'text_description': short_forecast,
-            'cloud_cover': cloud_cover_percent,
+            # 'cloud_cover': cloud_cover_percent, # Retaining this value for display, but removing the check
             'cloud_base_ft': cloud_base_ft
         }
     except Exception as e:
@@ -181,7 +180,7 @@ def check_flight_status(weather_data, kp_index, is_daylight):
     temp_f = weather_data.get('temp_f', 60.0)
     visibility_miles = weather_data.get('visibility_miles', 10.0)
     precip_prob = weather_data.get('precip_prob', 0)
-    cloud_cover = weather_data.get('cloud_cover', 0)
+    # cloud_cover = weather_data.get('cloud_cover', 0) # Removed check
     cloud_base_ft = weather_data.get('cloud_base_ft', 5000) # Default to high altitude if data is missing
     
     # 1. Wind Check (Applying the safety buffer for altitude)
@@ -205,9 +204,7 @@ def check_flight_status(weather_data, kp_index, is_daylight):
         reasons_to_ground.append(f"🌫️ Visibility too low: {visibility_miles:.1f} miles")
     
     # 4. Cloud Check (Based on Part 107 VLoS and 400ft AGL rule)
-    if cloud_cover > LIMITS['MAX_CLOUD_COVER']:
-        reasons_to_ground.append(f"☁️ Cloud Cover ({cloud_cover}%) too high for required Visual Line of Sight (VLoS).")
-        
+    
     # Cloud base must be >= 900ft to allow flight up to 400ft AGL (400ft max + 500ft buffer = 900ft)
     if cloud_base_ft < LIMITS['MIN_CLOUD_BASE_FT']:
         # Calculate the maximum safe altitude permitted
@@ -239,9 +236,9 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index):
     temp_f = data.get('temp_f', 60.0)
     visibility_miles = data.get('visibility_miles', 10.0)
     precip_prob = data.get('precip_prob', 0)
-    cloud_cover = data.get('cloud_cover', 0)
     cloud_base_ft = data.get('cloud_base_ft', 5000)
     short_forecast = data.get('text_description', 'N/A')
+    cloud_cover = data.get('cloud_cover', 0) # Retaining for display
 
     # Helper function to return 'FAIL' or 'PASS'
     def get_status(condition):
@@ -264,8 +261,8 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index):
         ['Visibility (Estimated)', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", get_status(visibility_miles < limits['MIN_VISIBILITY_MILES'])],
         
         # Cloud Checks (NOW CORRECTED FOR PART 107)
-        ['Cloud Cover', f"{cloud_cover:.0f}%", f"≤ {limits['MAX_CLOUD_COVER']}%", get_status(cloud_cover > limits['MAX_CLOUD_COVER'])],
         ['Cloud Base Altitude (AGL)', f"{cloud_base_ft:.0f} ft", f"≥ {limits['MIN_CLOUD_BASE_FT']} ft (400ft max + 500ft buffer)", get_status(cloud_base_ft < limits['MIN_CLOUD_BASE_FT'])],
+        ['Cloud Cover %', f"{cloud_cover:.0f}%", "Info (Overhead)", 'Info'], # Displaying this as "Info" only
         
         # GPS/Daylight
         ['Kp Index (GPS Risk)', f"{kp_index:.1f}", f"≤ {limits['MAX_KP_INDEX']} Kp", get_status(kp_index >= limits['MAX_KP_INDEX'])],
@@ -328,8 +325,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚁 Mavic 3 Pro Flight Checker")
-st.subheader("Zero-Cost Pre-Flight Safety Check")
+st.title("🚁 Drone Flight Safety Checker")
+st.subheader("Zero-Cost Pre-Flight Safety Check for Mavic 3 Pro")
 st.markdown("---")
 
 location = streamlit_geolocation()
