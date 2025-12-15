@@ -104,29 +104,32 @@ def fetch_metar_data(icao_code):
 
 # --- CORE MAVIC 3 PRO LOGIC (Simplified from previous response) ---
 def fetch_kp_index():
-    """Fetches the latest estimated Kp Index from the GFZ (free, no key)."""
-    print("--- Fetching Geomagnetic Data (Kp Index) ---")
-    # GFZ provides real-time Kp estimates in an accessible JSON format
-    kp_url = "https://kp.gfz.de/app/json/nowcast-kp-index"
+    """Fetches the latest estimated Kp Index from NOAA SWPC (free, no key)."""
+    # NOAA SWPC uses a text file for simplicity. We parse the last line.
+    kp_url = "https://services.swpc.noaa.gov/products/noaa-estimated-planetary-kindex-dst.txt"
     
     try:
         response = requests.get(kp_url)
         response.raise_for_status()
-        data = response.json()
         
-        # The data is an array of [time, Kp_value]. We want the last, most recent value.
-        if data and 'data' in data and data['data']:
-            # Kp values are often represented in thirds (e.g., 5- = 4.7, 5 = 5.0, 5+ = 5.3).
-            # The JSON array returns the raw number (e.g., 47 for 4 2/3).
-            # We divide by 10 to get the standard decimal value.
-            latest_kp_raw = data['data'][-1][1] 
-            latest_kp = latest_kp_raw / 10.0
-            print(f"   -> Latest Kp Index Found: {latest_kp}")
-            return latest_kp
-
+        # Read the content and split by line
+        lines = response.text.strip().split('\n')
+        
+        # The first line is header. We want the last actual data line.
+        if len(lines) > 1:
+            # Data is space-separated: [date, time, Kp_value, ...]
+            last_line = lines[-1]
+            fields = last_line.split()
+            
+            # The Kp index is the third field (index 2)
+            kp_index = float(fields[2])
+            
+            st.info(f"Geomagnetic Check: Kp Index {kp_index:.1f} (Source: NOAA SWPC)")
+            return kp_index
+        
         return 0.0 # Default to calm if data is missing
     except Exception as e:
-        st.warning(f"Error fetching Kp Index: {e}. Defaulting to Kp 0.0.")
+        st.warning(f"Error fetching Kp Index: {e}. Defaulting to Kp 0.0 (Check for GPS stability manually).")
         return 0.0
 
 def check_flight_status(weather_data):
