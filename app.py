@@ -100,17 +100,11 @@ def fetch_metar_data(icao_code):
         temp_c = data['temperature']['value']
         temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0
 
-<<<<<<< HEAD
         # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED)
-        WIND_CONV_FACTOR = 2.23694 # 1 m/s = 2.23694 MPH
-        
-=======
-        # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED HERE)
         # NWS data is typically in m/s. 1 m/s = 2.23694 MPH.
         WIND_CONV_FACTOR = 2.23694
 
         # Get the raw values, default to 0 if None exists
->>>>>>> 0a13f8a (test)
         wind_speed_ms = data['windSpeed']['value'] if data['windSpeed']['value'] is not None else 0
         wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
         
