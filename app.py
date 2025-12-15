@@ -226,7 +226,7 @@ def check_flight_status(weather_data, kp_index, is_daylight):
 # --- PANDAS/STYLING FUNCTIONS FOR MOBILE TABLE ---
 
 def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, icao_code):
-    """Creates a mobile-friendly, color-coded Pandas DataFrame."""
+    """Creates a mobile-friendly, color-coded Pandas DataFrame with a 'Pass/Fail' column."""
     
     # Extract adjusted values
     wind_speed_adjusted = data.get('wind_speed', 0.0) * limits['WIND_SAFETY_BUFFER']
@@ -237,67 +237,67 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
     wind_dir_deg = data.get('wind_direction_deg', 0)
     wind_dir_cardinal = degrees_to_cardinal(wind_dir_deg)
 
-    # 1. Define the DataFrame structure
+    # Helper function to return 'FAIL' or 'PASS'
+    def get_status(condition):
+        return 'FAIL' if condition else 'PASS'
+
+    # 1. Define the DataFrame structure (New 'Status' column)
     df_data = [
-        # Parameter | Current Value | Safe Limit | Failed (Boolean for styling)
+        # Parameter | Current Value | Safe Limit | Status ('PASS'/'FAIL')
         
-        # Wind Speed (Adjusted)
-        ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH']],
+        ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", get_status(wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH'])],
         
-        # Wind Gust (Adjusted)
-        ['Wind Gust (Adjusted)', f"{wind_gust_adjusted:.1f} MPH", f"≤ {limits['MAX_GUST_SPEED_MPH']} MPH", wind_gust_adjusted > limits['MAX_GUST_SPEED_MPH']],
+        ['Wind Gust (Adjusted)', f"{wind_gust_adjusted:.1f} MPH", f"≤ {limits['MAX_GUST_SPEED_MPH']} MPH", get_status(wind_gust_adjusted > limits['MAX_GUST_SPEED_MPH'])],
         
-        # Wind Direction (Info only)
-        ['Wind Direction', f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", False],
+        # Info rows: Always 'PASS' for styling purposes, but we will override the color
+        ['Wind Direction', f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", 'PASS'],
         
-        # Temperature
-        ['Temperature', f"{temp_f:.1f} °F", f"{limits['MIN_TEMP_F']}-{limits['MAX_TEMP_F']} °F", (temp_f < limits['MIN_TEMP_F'] or temp_f > limits['MAX_TEMP_F'])],
+        ['Temperature', f"{temp_f:.1f} °F", f"{limits['MIN_TEMP_F']}-{limits['MAX_TEMP_F']} °F", get_status(temp_f < limits['MIN_TEMP_F'] or temp_f > limits['MAX_TEMP_F'])],
         
-        # Visibility
-        ['Visibility', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", visibility_miles < limits['MIN_VISIBILITY_MILES']],
+        ['Visibility', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", get_status(visibility_miles < limits['MIN_VISIBILITY_MILES'])],
         
-        # Precipitation Risk
-        ['Precipitation Risk', f"{precip_prob:.0f}%", f"≤ {limits['MAX_PRECIP_PROB']}% (No water)", precip_prob > limits['MAX_PRECIP_PROB']],
+        ['Precipitation Risk', f"{precip_prob:.0f}%", f"≤ {limits['MAX_PRECIP_PROB']}% (No water)", get_status(precip_prob > limits['MAX_PRECIP_PROB'])],
         
-        # Kp Index (GPS Risk)
-        ['Kp Index (GPS Risk)', f"{kp_index:.1f}", f"≤ {limits['MAX_KP_INDEX']} Kp", kp_index >= limits['MAX_KP_INDEX']],
+        ['Kp Index (GPS Risk)', f"{kp_index:.1f}", f"≤ {limits['MAX_KP_INDEX']} Kp", get_status(kp_index >= limits['MAX_KP_INDEX'])],
         
-        # Daylight Status
-        ['Daylight Status', "Daytime" if is_daylight else "Nighttime", "Daylight Only", not is_daylight],
+        ['Daylight Status', "Daytime" if is_daylight else "Nighttime", "Daylight Only", get_status(not is_daylight)],
         
-        # Weather Station (Info only)
-        ['Weather Station', f"{station_name} [{icao_code}]", "NWS Data Source", False]
+        # Info rows: Always 'PASS' for styling purposes, but we will override the color
+        ['Weather Station', f"{station_name} [{icao_code}]", "NWS Data Source", 'PASS']
     ]
 
-    # Create the DataFrame
-    df = pd.DataFrame(df_data, columns=['Parameter', 'Current Value', 'Safe Limit', 'Failed'])
+    # Create the DataFrame and rename the 'Status' column for display
+    df = pd.DataFrame(df_data, columns=['Parameter', 'Current Value', 'Safe Limit', 'Status']).rename(
+        columns={'Status': 'Pass/Fail'}
+    )
     
     # 2. Define the styling function
     def color_status(s):
-        """Applies red or green background based on the 'Failed' column, ensuring high text contrast."""
-        # Enforce dark text color for contrast on light backgrounds
+        """Applies red or green background based on the 'Pass/Fail' column, ensuring high text contrast."""
         DARK_TEXT_COLOR = 'color: #31333F' 
-
-        if s['Failed']:
+        
+        # Get the status from the renamed column
+        status = s['Pass/Fail']
+        
+        if status == 'FAIL':
             # Red background, dark text
             return [f'background-color: #ffcccc; {DARK_TEXT_COLOR}'] * len(s) 
         elif s['Parameter'] in ['Wind Direction', 'Weather Station']:
-            # No color for info rows
+            # Info rows: No color
             return [''] * len(s) 
         else:
-            # Green background, dark text
+            # PASS (Green background, dark text)
             return [f'background-color: #ccffcc; {DARK_TEXT_COLOR}'] * len(s) 
 
     # 3. Apply the styling
-    # Fixed the deprecated .hide() method and added padding for mobile view.
-    styled_df = df.style.apply(color_status, axis=1).hide(axis='columns', names=['Failed']).set_properties(
-        **{'font-size': '14pt', 'padding': '8px'} # Improve mobile padding
+    # Note: We are NO LONGER hiding the 'Pass/Fail' column
+    styled_df = df.style.apply(color_status, axis=1).set_properties(
+        **{'font-size': '14pt', 'padding': '8px'} 
     ).to_html() 
     
-    # 4. Manually insert the tooltip (<abbr> tag) into the HTML for mobile
+    # 4. Manually insert the tooltip (<abbr> tag) into the HTML
     ADJUSTED_TITLE_HTML = "title='The raw wind speed is increased by 25% (x1.25) to account for wind shear and increased turbulence at altitude (400ft AGL). This provides a critical safety buffer.'"
     
-    # Replace the plain text with the <abbr> tag in the HTML string
     styled_df = styled_df.replace(
         'Wind Speed (Adjusted)', 
         f"<abbr {ADJUSTED_TITLE_HTML}>Wind Speed (Adjusted)</abbr>"
