@@ -30,7 +30,7 @@ def get_nearest_metar_code(lat, lon):
     # Aviation Edge URL to find the nearest airport to coordinates
     url = (
         "https://aviation-edge.com/v2/public/nearby?"
-        f"key={AVIATION_EDGE_EDGE_KEY}&lat={lat}&lng={lon}&distance=20&type=airport"
+        f"key={AVIATION_EDGE_KEY}&lat={lat}&lng={lon}&distance=20&type=airport"
     )
     
     try:
