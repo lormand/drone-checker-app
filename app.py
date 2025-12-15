@@ -274,23 +274,27 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
     
     # 2. Define the styling function
     def color_status(s):
-        """Applies red or green background based on the 'Failed' column."""
+        """Applies red or green background based on the 'Failed' column, ensuring high text contrast."""
+        # Enforce dark text color for contrast on light backgrounds
+        DARK_TEXT_COLOR = 'color: #31333F' 
+
         if s['Failed']:
-            return ['background-color: #ffcccc'] * len(s) # Red background for failure
+            # Red background, dark text
+            return [f'background-color: #ffcccc; {DARK_TEXT_COLOR}'] * len(s) 
         elif s['Parameter'] in ['Wind Direction', 'Weather Station']:
-            return [''] * len(s) # No color for info rows
+            # No color for info rows
+            return [''] * len(s) 
         else:
-            return ['background-color: #ccffcc'] * len(s) # Green background for passing rows
+            # Green background, dark text
+            return [f'background-color: #ccffcc; {DARK_TEXT_COLOR}'] * len(s) 
 
     # 3. Apply the styling
-    # --- FIX APPLIED HERE: Using hide(axis='columns', names=[...]) instead of hide(columns=[...]) ---
+    # Fixed the deprecated .hide() method and added padding for mobile view.
     styled_df = df.style.apply(color_status, axis=1).hide(axis='columns', names=['Failed']).set_properties(
         **{'font-size': '14pt', 'padding': '8px'} # Improve mobile padding
     ).to_html() 
-    # --------------------------------------------------------------------------------------------------
-
-    # 4. Manually insert the tooltip into the HTML for mobile
-    # Since st.dataframe doesn't support <abbr> directly, we inject it into the final HTML
+    
+    # 4. Manually insert the tooltip (<abbr> tag) into the HTML for mobile
     ADJUSTED_TITLE_HTML = "title='The raw wind speed is increased by 25% (x1.25) to account for wind shear and increased turbulence at altitude (400ft AGL). This provides a critical safety buffer.'"
     
     # Replace the plain text with the <abbr> tag in the HTML string
