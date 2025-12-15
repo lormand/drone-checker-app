@@ -26,27 +26,31 @@ AVIATION_EDGE_KEY = 'YOUR_AVIATION_EDGE_KEY'
 # --- FREE API FUNCTIONS (AWC/NWS) ---
 
 def get_nearest_station_id(lat, lon):
-    """Uses NWS /points endpoint to find the closest observation station ID."""
+    """Uses NWS /points endpoint to find the closest observation station ID (ICAO)."""
     try:
         # Step 1: Find all nearby stations
         points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}/stations"
         
-        # NOTE: NWS requires a custom User-Agent header (use your name/email)
+        # NOTE: NWS requires a custom User-Agent header
         headers = {'User-Agent': 'MavicProCheckerApp (randylormand@example.com)'}
         response = requests.get(points_url, headers=headers)
         response.raise_for_status()
         data = response.json()
         
-        # The first feature in the list is typically the closest station
+        # Check if the features list exists and is not empty
         if 'features' in data and data['features']:
-            # The station ID is typically the last segment of the @id URL
-            station_url = data['features'][0]['@id']
-            # Split the URL and take the last part (the ICAO/ID)
+            # The closest station's metadata is in the first feature
+            station_data = data['features'][0]
+            
+            # The station ID (ICAO) is the last part of the 'id' URL
+            station_url = station_data['id']
             icao_code = station_url.split('/')[-1]
             return icao_code
+        
+        # If no stations are found, return None
         return None
     except Exception as e:
-        st.error(f"Error finding nearest station from NWS: {e}")
+        st.error(f"Error finding nearest station from NWS: {e}. Check coordinates and NWS availability.")
         return None
 
 def fetch_metar_data(icao_code):
