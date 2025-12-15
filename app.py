@@ -320,7 +320,7 @@ if location is not None and location.get('latitude') is not None:
             else:
                 st.warning("Could not find a nearby weather-reporting airport.")
 else:
-    st.info("Click the button below to allow the app to access your location and run the check.")
+    st.info("Click the button above to allow the app to access your location and run the check.")
 
 st.markdown("---")
 st.caption("Disclaimer: This tool is for flight planning only. Always confirm safety, battery, and LAANC authorization manually.")
