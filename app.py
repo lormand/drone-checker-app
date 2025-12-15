@@ -243,14 +243,14 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
 
     # 1. Define the DataFrame structure (New 'Status' column)
     df_data = [
-        # Parameter | Current Value | Safe Limit | Status ('PASS'/'FAIL')
+        # Parameter | Current Value | Safe Limit | Status ('PASS'/'FAIL'/'Info')
         
         ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", get_status(wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH'])],
         
         ['Wind Gust (Adjusted)', f"{wind_gust_adjusted:.1f} MPH", f"≤ {limits['MAX_GUST_SPEED_MPH']} MPH", get_status(wind_gust_adjusted > limits['MAX_GUST_SPEED_MPH'])],
         
-        # Info rows: Always 'PASS' for styling purposes, but we will override the color
-        ['Wind Direction', f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", 'PASS'],
+        # Info rows: Set to 'Info' status
+        ['Wind Direction', f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", 'Info'],
         
         ['Temperature', f"{temp_f:.1f} °F", f"{limits['MIN_TEMP_F']}-{limits['MAX_TEMP_F']} °F", get_status(temp_f < limits['MIN_TEMP_F'] or temp_f > limits['MAX_TEMP_F'])],
         
@@ -262,8 +262,8 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
         
         ['Daylight Status', "Daytime" if is_daylight else "Nighttime", "Daylight Only", get_status(not is_daylight)],
         
-        # Info rows: Always 'PASS' for styling purposes, but we will override the color
-        ['Weather Station', f"{station_name} [{icao_code}]", "NWS Data Source", 'PASS']
+        # Info rows: Set to 'Info' status
+        ['Weather Station', f"{station_name} [{icao_code}]", "NWS Data Source", 'Info']
     ]
 
     # Create the DataFrame and rename the 'Status' column for display
@@ -273,17 +273,16 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
     
     # 2. Define the styling function
     def color_status(s):
-        """Applies red or green background based on the 'Pass/Fail' column, ensuring high text contrast."""
+        """Applies red or green background based on the 'Pass/Fail' column."""
         DARK_TEXT_COLOR = 'color: #31333F' 
         
-        # Get the status from the renamed column
         status = s['Pass/Fail']
         
         if status == 'FAIL':
-            # Red background, dark text
+            # FAIL (Red background, dark text)
             return [f'background-color: #ffcccc; {DARK_TEXT_COLOR}'] * len(s) 
-        elif s['Parameter'] in ['Wind Direction', 'Weather Station']:
-            # Info rows: No color
+        elif status == 'Info':
+            # Info rows: No color for uniformity as non-Go/No-Go items
             return [''] * len(s) 
         else:
             # PASS (Green background, dark text)
