@@ -26,7 +26,7 @@ LOCAL_TIMEZONE = 'America/Chicago'
 
 def degrees_to_cardinal(deg):
     """Converts wind degrees (0-360) to a cardinal direction (N, NE, SW, etc.)."""
-    dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+    dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNN']
     ix = round(deg / (360. / len(dirs)))
     return dirs[ix % len(dirs)]
 
@@ -108,7 +108,6 @@ def fetch_metar_data(icao_code):
         wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
         
         # *** CRITICAL FIX FOR 10X ERROR ***
-        # Divide the raw m/s value by 10 to correct the observed over-reporting.
         wind_speed_ms_corrected = wind_speed_ms / 10.0
         wind_gust_ms_corrected = wind_gust_ms / 10.0
         
@@ -123,7 +122,6 @@ def fetch_metar_data(icao_code):
 
         # 4. Precipitation Check
         present_weather = data['textDescription'] if data.get('textDescription') else ""
-        # Default to 0, or 100 if any weather condition suggests moisture
         precip_risk = 100 if any(word in present_weather.lower() for word in ['rain', 'snow', 'drizzle', 'thunder', 'fog']) else 0
         
         return {
@@ -162,17 +160,7 @@ def fetch_kp_index():
     except:
         return 0.0
 
-def check_airspace(lat, lon):
-    """
-    Provides a CRITICAL warning for manual airspace check, as free APIs are unreliable/unavailable.
-    This check intentionally returns a warning to force manual pilot verification.
-    """
-    reasons = [
-        "🔴 CRITICAL SAFETY CHECK FAILED: The free Airspace Data API is currently unavailable or unstable.",
-        "YOU MUST check the FAA's B4UFLY App or your LAANC provider (Aloft, Airspace Link, etc.) before flying.",
-        "Your location may be in Class B/C/D controlled airspace, TFR, or a prohibited zone."
-    ]
-    return "WARNING", reasons
+# NOTE: The check_airspace function is intentionally removed to decouple the requirement.
 
 # --- CORE MAVIC 3 PRO LOGIC ---
 
@@ -243,7 +231,7 @@ if location is not None and location.get('latitude') is not None:
     st.info(f"📍 Current Location: Latitude {lat:.4f}, Longitude {lon:.4f}")
     
     if st.button("Run Comprehensive Flight Check", type="primary"):
-        with st.spinner('Fetching NWS Weather, Kp Index, and Airspace check...'):
+        with st.spinner('Fetching NWS Weather and Kp Index...'):
             
             # 1. Fetch Kp Index
             kp_index = fetch_kp_index()
@@ -251,10 +239,7 @@ if location is not None and location.get('latitude') is not None:
             # 2. Fetch Accurate Sunrise/Sunset Times
             sunrise_local, sunset_local, is_daylight = fetch_sunrise_sunset(lat, lon) 
             
-            # 3. Fetch Airspace Data (Critical Warning)
-            airspace_status, airspace_reasons = check_airspace(lat, lon)
-            
-            # 4. Fetch Weather Data
+            # 3. Fetch Weather Data
             icao_code = get_nearest_station_id(lat, lon)
             
             # --- Aggregated Logic ---
@@ -264,22 +249,12 @@ if location is not None and location.get('latitude') is not None:
                 # Check weather and Kp limits
                 status, weather_reasons = check_flight_status(weather_data, kp_index, is_daylight)
                 
-                # Combine all reasons (Weather/Kp + Airspace)
-                all_reasons = weather_reasons + airspace_reasons
+                all_reasons = weather_reasons
                 
-                # --- Multi-Tiered Decision Logic ---
-                
-                # A. Check for Physical/Weather Limit Failure (Highest Priority: RED)
+                # --- Binary Decision Logic (GO/NO-GO) ---
                 if status == "DON'T FLY":
                     final_status = "DON'T FLY"
                     banner_color = "error" # RED
-
-                # B. Check for Critical Airspace Data Failure (Medium Priority: YELLOW)
-                elif airspace_status == "WARNING":
-                    final_status = "MANUAL CHECK REQUIRED"
-                    banner_color = "warning" # YELLOW
-                    
-                # C. All checks passed (Lowest Priority: GREEN)
                 else:
                     final_status = "READY TO LAUNCH"
                     banner_color = "success" # GREEN
@@ -290,11 +265,12 @@ if location is not None and location.get('latitude') is not None:
                 if banner_color == "success":
                     st.success(f"✅ GO! Conditions are favorable. Weather from **{icao_code}**.")
                     st.balloons()
-                elif banner_color == "warning":
-                    st.warning(f"⚠️ {final_status}: Weather is GO, but a critical safety check failed.")
                 else:
                     st.error(f"❌ NO GO. Check reasons below.")
                 
+                # --- Persistent Airspace Warning ---
+                st.warning("⚠️ CRITICAL REMINDER: Airspace authorization is required. You MUST check the official **Air Control** app or LAANC provider (Aloft, Airspace Link, etc.) before flying.")
+
                 # --- Robust Status Display using Columns and Markdown (Stable Table) ---
                 st.markdown("### 📊 Detailed Conditions")
 
@@ -380,14 +356,7 @@ if location is not None and location.get('latitude') is not None:
                     icon, color = "✅", "green"
                 display_row("Daylight Status", "Daytime" if is_daylight else "Nighttime", "Daylight Only", icon, color)
                 
-                # 9. Airspace Check
-                if airspace_status == "WARNING":
-                    icon, color = "⚠️", "orange"
-                else:
-                    icon, color = "✅", "green"
-                display_row("Airspace Check", airspace_status, "Manual Check Required", icon, color)
-
-                # 10. Weather Station (Info only)
+                # 9. Weather Station (Info only)
                 display_row("Weather Station", icao_code, "NWS Data Source", "ℹ️", "gray")
 
                 st.markdown("---")
