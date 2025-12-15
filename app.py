@@ -315,9 +315,13 @@ if location is not None and location.get('latitude') is not None:
                 # --- Helper function for status display ---
                 def display_row(param, current, limit, status_icon, status_color):
                     """Prints a single row with status color applied via markdown."""
-                    col_param.markdown(f"**{status_icon} {param}**")
+                    # Use unsafe_allow_html=True to render the <abbr> tag for tooltips
+                    col_param.markdown(f"**{status_icon} {param}**", unsafe_allow_html=True)
                     col_current.markdown(f"<span style='color:{status_color}'>{current}</span>", unsafe_allow_html=True)
                     col_limit.markdown(limit)
+
+                # --- Tooltip Definition ---
+                ADJUSTED_TITLE = "The raw wind speed is increased by 25% (x1.25) to account for wind shear and increased turbulence at altitude (400ft AGL). This provides a critical safety buffer."
 
                 # --- Row Logic ---
                 
@@ -326,14 +330,20 @@ if location is not None and location.get('latitude') is not None:
                     icon, color = "❌", "red"
                 else:
                     icon, color = "✅", "green"
-                display_row("Wind Speed (Adjusted)", f"{wind_speed_adjusted:.1f} MPH", f"≤ {LIMITS['MAX_WIND_SPEED_MPH']} MPH", icon, color)
+                
+                # ADDING <abbr> TAG HERE
+                param_speed = f"<abbr title='{ADJUSTED_TITLE}'>Wind Speed (Adjusted)</abbr>"
+                display_row(param_speed, f"{wind_speed_adjusted:.1f} MPH", f"≤ {LIMITS['MAX_WIND_SPEED_MPH']} MPH", icon, color)
                 
                 # 2. Wind Gust
                 if wind_gust_adjusted > LIMITS['MAX_GUST_SPEED_MPH']:
                     icon, color = "❌", "red"
                 else:
                     icon, color = "✅", "green"
-                display_row("Wind Gust (Adjusted)", f"{wind_gust_adjusted:.1f} MPH", f"≤ {LIMITS['MAX_GUST_SPEED_MPH']} MPH", icon, color)
+                    
+                # ADDING <abbr> TAG HERE
+                param_gust = f"<abbr title='{ADJUSTED_TITLE}'>Wind Gust (Adjusted)</abbr>"
+                display_row(param_gust, f"{wind_gust_adjusted:.1f} MPH", f"≤ {LIMITS['MAX_GUST_SPEED_MPH']} MPH", icon, color)
 
                 # 3. Wind Direction (Info only)
                 display_row("Wind Direction", f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", "ℹ️", "gray")
