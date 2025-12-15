@@ -20,6 +20,41 @@ LIMITS = {
 
 # --- Utility Functions ---
 
+def fetch_sunrise_sunset(lat, lon):
+    """Fetches accurate sunrise and sunset times for the given coordinates."""
+    try:
+        # Date is current date
+        ss_url = f"https://api.sunrise-sunset.org/json?lat={lat}&lng={lon}&formatted=0"
+        response = requests.get(ss_url)
+        response.raise_for_status()
+        data = response.json()['results']
+        
+        # Convert UTC strings to datetime objects and localize
+        utc_tz = pytz.timezone('UTC')
+        local_tz = pytz.timezone('America/Chicago') # Assuming your local timezone
+        
+        # Convert and localize the sunrise time
+        sunrise_utc = datetime.strptime(data['sunrise'], '%Y-%m-%dT%H:%M:%S+00:00')
+        sunrise_local = utc_tz.localize(sunrise_utc).astimezone(local_tz).time()
+        
+        # Convert and localize the sunset time
+        sunset_utc = datetime.strptime(data['sunset'], '%Y-%m-%dT%H:%M:%S+00:00')
+        sunset_local = utc_tz.localize(sunset_utc).astimezone(local_tz).time()
+        
+        now_time = datetime.now(local_tz).time()
+        is_daylight = (now_time >= sunrise_local and now_time <= sunset_local)
+        
+        return sunrise_local, sunset_local, is_daylight
+        
+    except Exception as e:
+        # Fallback to a fixed placeholder if the API fails
+        st.warning(f"Sunrise/Sunset API failed: {e}. Using fixed 06:00-19:00 window.")
+        sunrise_ph = datetime(2000, 1, 1, 6, 0).time() 
+        sunset_ph = datetime(2000, 1, 1, 19, 0).time() 
+        now_time = datetime.now().time()
+        is_daylight = (now_time >= sunrise_ph and now_time <= sunset_ph)
+        return sunrise_ph, sunset_ph, is_daylight
+
 def degrees_to_cardinal(deg):
     """Converts wind degrees (0-360) to a cardinal direction (N, NE, SW, etc.)."""
     dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
