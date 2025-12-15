@@ -152,6 +152,10 @@ def check_flight_status(weather_data):
     # 5. Kp Index (Simulated - must be fetched separately in a real app)
     # Since you need to query a second API (like the one from the previous response)
     # we will skip it here, but it should be integrated if the check is critical.
+
+    # Satellite/GPS Check (Kp Index)
+    if weather_data.get('kp_index', 0) >= LIMITS['MAX_KP_INDEX']:
+        reasons_to_ground.append(f"High Solar Storm activity (Kp {weather_data['kp_index']:.1f}). GPS instability possible.")
     
     if reasons_to_ground:
         return "DON'T FLY", reasons_to_ground
