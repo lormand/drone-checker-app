@@ -14,7 +14,7 @@ LIMITS = {
     'MIN_TEMP_F': 14.0,             # -10°C
     'MAX_TEMP_F': 104.0,            # 40°C
     'MIN_VISIBILITY_MILES': 3.0,    # FAA minimum visibility for Part 107
-    'MAX_PRECIP_PROB': 0,           # 0% (No water resistance)
+    'MAX_PRECIP_PROB': 100,         # Set high to disable FAIL status; handled as Info/Warning
     'MAX_KP_INDEX': 5.0,            # Geomagnetic storm threshold (affects GPS lock)
     'WIND_SAFETY_BUFFER': 1.25,     # Safety factor for ground wind at altitude
     'MIN_CLOUD_BASE_FT': 900        # Min cloud base height (AGL) to allow full 400ft flight ceiling (400ft max + 500ft buffer)
@@ -139,7 +139,7 @@ def fetch_hourly_forecast(forecast_url):
             'visibility_miles': visibility_miles,
             'precip_prob': float(precip_prob),
             'text_description': short_forecast,
-            # 'cloud_cover': cloud_cover_percent, # Retaining this value for display, but removing the check
+            'cloud_cover': cloud_cover_percent,
             'cloud_base_ft': cloud_base_ft
         }
     except Exception as e:
@@ -179,9 +179,8 @@ def check_flight_status(weather_data, kp_index, is_daylight):
     wind_gust_raw = weather_data.get('wind_gust', 0.0)
     temp_f = weather_data.get('temp_f', 60.0)
     visibility_miles = weather_data.get('visibility_miles', 10.0)
-    precip_prob = weather_data.get('precip_prob', 0)
-    # cloud_cover = weather_data.get('cloud_cover', 0) # Removed check
-    cloud_base_ft = weather_data.get('cloud_base_ft', 5000) # Default to high altitude if data is missing
+    # precip_prob = weather_data.get('precip_prob', 0) # Removed from FAIL check
+    cloud_base_ft = weather_data.get('cloud_base_ft', 5000) 
     
     # 1. Wind Check (Applying the safety buffer for altitude)
     actual_wind = wind_speed_raw * LIMITS['WIND_SAFETY_BUFFER']
@@ -196,16 +195,13 @@ def check_flight_status(weather_data, kp_index, is_daylight):
     if temp_f < LIMITS['MIN_TEMP_F'] or temp_f > LIMITS['MAX_TEMP_F']:
         reasons_to_ground.append(f"🌡️ Temperature is unsafe: {temp_f:.1f}°F")
 
-    # 3. Moisture and Visibility Check
-    if precip_prob > LIMITS['MAX_PRECIP_PROB']:
-        reasons_to_ground.append(f"💧 Precipitation risk: {precip_prob:.0f}% chance. Mavic 3 is not waterproof!")
-
+    # 3. Visibility Check
     if visibility_miles < LIMITS['MIN_VISIBILITY_MILES']:
         reasons_to_ground.append(f"🌫️ Visibility too low: {visibility_miles:.1f} miles")
     
-    # 4. Cloud Check (Based on Part 107 VLoS and 400ft AGL rule)
+    # Note: Precipitation check is removed here, handled by a separate st.warning in the UI.
     
-    # Cloud base must be >= 900ft to allow flight up to 400ft AGL (400ft max + 500ft buffer = 900ft)
+    # 4. Cloud Check (Based on Part 107 VLoS and 400ft AGL rule)
     if cloud_base_ft < LIMITS['MIN_CLOUD_BASE_FT']:
         # Calculate the maximum safe altitude permitted
         max_safe_alt = max(0, int(cloud_base_ft - 500))
@@ -238,11 +234,14 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index):
     precip_prob = data.get('precip_prob', 0)
     cloud_base_ft = data.get('cloud_base_ft', 5000)
     short_forecast = data.get('text_description', 'N/A')
-    cloud_cover = data.get('cloud_cover', 0) # Retaining for display
+    cloud_cover = data.get('cloud_cover', 0) 
 
     # Helper function to return 'FAIL' or 'PASS'
     def get_status(condition):
         return 'FAIL' if condition else 'PASS'
+    
+    # Precipitation Status Logic: NEVER FAIL, only PASS or Info
+    precip_status = 'Info' if precip_prob > 0 else 'PASS'
 
     # 1. Define the DataFrame structure (New 'Status' column)
     df_data = [
@@ -252,17 +251,19 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index):
         ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", get_status(wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH'])],
         ['Wind Gust (Adjusted)', f"{wind_gust_adjusted:.1f} MPH", f"≤ {limits['MAX_GUST_SPEED_MPH']} MPH", get_status(wind_gust_adjusted > limits['MAX_GUST_SPEED_MPH'])],
         
-        # New Detailed Weather Info
+        # Detailed Weather Info
         ['Current Conditions', short_forecast, "Info (Variable)", 'Info'],
-        ['Precipitation Probability', f"{precip_prob:.0f}%", f"≤ {limits['MAX_PRECIP_PROB']}% (No water)", get_status(precip_prob > limits['MAX_PRECIP_PROB'])],
+        
+        # Precipitation (Info only)
+        ['Precipitation Probability', f"{precip_prob:.0f}%", "Hardware Limit (Non-Waterproof)", precip_status],
         
         # Temperature/Visibility
         ['Temperature', f"{temp_f:.1f} °F", f"{limits['MIN_TEMP_F']}-{limits['MAX_TEMP_F']} °F", get_status(temp_f < limits['MIN_TEMP_F'] or temp_f > limits['MAX_TEMP_F'])],
         ['Visibility (Estimated)', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", get_status(visibility_miles < limits['MIN_VISIBILITY_MILES'])],
         
-        # Cloud Checks (NOW CORRECTED FOR PART 107)
+        # Cloud Checks 
         ['Cloud Base Altitude (AGL)', f"{cloud_base_ft:.0f} ft", f"≥ {limits['MIN_CLOUD_BASE_FT']} ft (400ft max + 500ft buffer)", get_status(cloud_base_ft < limits['MIN_CLOUD_BASE_FT'])],
-        ['Cloud Cover %', f"{cloud_cover:.0f}%", "Info (Overhead)", 'Info'], # Displaying this as "Info" only
+        ['Cloud Cover %', f"{cloud_cover:.0f}%", "Info (Overhead)", 'Info'], 
         
         # GPS/Daylight
         ['Kp Index (GPS Risk)', f"{kp_index:.1f}", f"≤ {limits['MAX_KP_INDEX']} Kp", get_status(kp_index >= limits['MAX_KP_INDEX'])],
@@ -353,6 +354,7 @@ if location is not None and location.get('latitude') is not None:
             if forecast_url:
                 # 4. Fetch Hourly Forecast Data
                 weather_data = fetch_hourly_forecast(forecast_url) or {} 
+                precip_prob = weather_data.get('precip_prob', 0)
                 
                 # Check weather and Kp limits
                 status, weather_reasons = check_flight_status(weather_data, kp_index, is_daylight)
@@ -376,6 +378,10 @@ if location is not None and location.get('latitude') is not None:
                     st.balloons()
                 else:
                     st.error(f"❌ NO GO. Check reasons below. Weather from **NWS Hourly Forecast**.")
+                
+                # --- CRITICAL PRECIPITATION WARNING ---
+                if precip_prob > 0:
+                    st.warning(f"⚠️ **HARDWARE RISK:** Precipitation Probability is **{precip_prob:.0f}%**. The Mavic 3 Pro is NOT waterproof and flight is highly discouraged.")
                 
                 # --- Persistent Airspace Warning (Revised for Accuracy) ---
                 st.warning("⚠️ CRITICAL REMINDER: Airspace requirements MUST be verified before flight. Authorization is mandatory in all Controlled Airspace (Class B, C, D, and surface E). You MUST check the official **Air Control** app or a LAANC provider (Aloft, Airspace Link, etc.) to confirm your local airspace status.")
