@@ -375,7 +375,7 @@ if location is not None and location.get('latitude') is not None:
                 # --- Display Status ---
                 if banner_color == "success":
                     st.success(f"✅ GO! Conditions are favorable. Weather from **NWS Hourly Forecast**.")
-                    st.balloons()
+                    #st.balloons()
                 else:
                     st.error(f"❌ NO GO. Check reasons below. Weather from **NWS Hourly Forecast**.")
                 
