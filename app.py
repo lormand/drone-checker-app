@@ -285,8 +285,8 @@ if location is not None and location.get('latitude') is not None:
                 else:
                     st.error(f"❌ NO GO. Check reasons below. Weather from **{station_name} [{icao_code}]**.")
                 
-                # --- Persistent Airspace Warning ---
-                st.warning("⚠️ CRITICAL REMINDER: Airspace authorization is required. You MUST check the official **Air Control** app or LAANC provider (Aloft, Airspace Link, etc.) before flying.")
+                # --- Persistent Airspace Warning (Revised for Accuracy) ---
+                st.warning("⚠️ CRITICAL REMINDER: Airspace requirements MUST be verified before flight. Authorization is mandatory in all Controlled Airspace (Class B, C, D, and surface E). You MUST check the official **Air Control** app or a LAANC provider (Aloft, Airspace Link, etc.) to confirm your local airspace status.")
 
                 # --- Robust Status Display using Columns and Markdown (Stable Table) ---
                 st.markdown("### 📊 Detailed Conditions")
