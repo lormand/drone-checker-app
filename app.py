@@ -102,11 +102,22 @@ def fetch_metar_data(icao_code):
         temp_c = data['temperature']['value']
         temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0
 
-        # 2. Wind Speed and Gust: m/s to MPH (1 m/s ≈ 2.237 mph)
+        # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED HERE)
+        # NWS data is typically in m/s. 1 m/s = 2.23694 MPH.
+        WIND_CONV_FACTOR = 2.23694
+
+        # Get the raw values, default to 0 if None
         wind_speed_ms = data['windSpeed']['value'] if data['windSpeed']['value'] is not None else 0
         wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
-        wind_speed_mph = wind_speed_ms * 2.237 
-        wind_gust_mph = wind_gust_ms * 2.237
+
+        # *** CRITICAL FIX FOR 10X ERROR ***
+        # Divide the raw m/s value by 10 to correct the over-reporting.
+        wind_speed_ms_corrected = wind_speed_ms / 10.0
+        wind_gust_ms_corrected = wind_gust_ms / 10.0
+
+        wind_speed_mph = wind_speed_ms_corrected * WIND_CONV_FACTOR 
+        wind_gust_mph = wind_gust_ms_corrected * WIND_CONV_FACTOR
+
         wind_dir_deg = data['windDirection']['value'] if data['windDirection']['value'] is not None else 0
 
         # 3. Visibility: Meters to Miles
