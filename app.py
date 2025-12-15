@@ -137,38 +137,24 @@ def fetch_kp_index():
 
 def check_airspace(lat, lon):
     """
-    Checks for immediate airspace restrictions using OpenAIP (community data).
-    NOTE: This is a simplified check and does NOT replace official LAANC authorization.
+    Since free, reliable airspace APIs are unavailable, this function
+    provides a strong warning and directs the user to an official FAA source.
     """
-    # OpenAIP is currently the most accessible keyless service for this.
-    airspace_url = f"http://api.openaip.net/api/airspaces?lat={lat}&lon={lon}&dist=10"
+    airspace_url = "http://api.openaip.net/api/airspaces" # Placeholder for failed API
     
     try:
-        response = requests.get(airspace_url)
-        response.raise_for_status()
-        data = response.json()
+        # Intentionally raise an exception here or remove the code entirely
+        # to ensure the user always gets a manual check, as a failed check is dangerous.
+        raise requests.exceptions.RequestException("OpenAIP API no longer free/keyless.") 
         
-        restricted_zones = []
-        
-        for item in data.get('airspaces', []):
-            type = item.get('type')
-            name = item.get('name')
-            
-            # Identify critical restrictions
-            if type in ['PROHIBITED', 'RESTRICTED', 'DANGER']:
-                restricted_zones.append(f"🔴 PROHIBITED/DANGER ZONE: {name}")
-            
-            # Identify controlled airspace requiring LAANC
-            elif type in ['CLASS B', 'CLASS C', 'CLASS D']:
-                 restricted_zones.append(f"⚠️ {type} AIRSPACE: LAANC authorization required.")
-        
-        if restricted_zones:
-            return "RESTRICTED", restricted_zones
-        else:
-            return "CLEAR", ["Airspace appears clear for VFR flight."]
-
     except Exception as e:
-        return "WARNING", [f"Airspace check failed ({e}). Check LAANC app manually."]
+        # Provide the strongest possible warning and the official solution
+        reasons = [
+            "🔴 CRITICAL SAFETY CHECK FAILED: Could not access free Airspace Data API.",
+            "YOU MUST check the FAA's B4UFLY App or your LAANC provider (Aloft, Airspace Link, etc.) before flying.",
+            "Your location may be in Class B/C/D controlled airspace, TFR, or a prohibited zone."
+        ]
+        return "WARNING", reasons
 
 # --- CORE MAVIC 3 PRO LOGIC ---
 
