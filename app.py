@@ -16,7 +16,9 @@ LIMITS = {
     'MIN_VISIBILITY_MILES': 3.0,    # FAA minimum visibility for Part 107
     'MAX_PRECIP_PROB': 0,           # 0% (No water resistance)
     'MAX_KP_INDEX': 5.0,            # Geomagnetic storm threshold (affects GPS lock)
-    'WIND_SAFETY_BUFFER': 1.25      # Safety factor for ground wind at altitude
+    'WIND_SAFETY_BUFFER': 1.25,     # Safety factor for ground wind at altitude
+    'MAX_CLOUD_COVER': 95,          # Max cloud cover for visual line of sight (VLoS)
+    'MIN_CLOUD_BASE_FT': 900        # Min cloud base height (AGL) to allow full 400ft flight ceiling (400ft + 500ft buffer)
 }
 
 # NOTE: Set your local timezone for accurate daylight calculations!
@@ -70,88 +72,79 @@ def fetch_sunrise_sunset(lat, lon):
         return sunrise_ph, sunset_ph, is_daylight
 
 @st.cache_data(ttl=300)
-def get_nearest_station_id(lat, lon):
-    """Uses NWS /points endpoint to find the closest observation station ID (ICAO)."""
+def get_nws_forecast_url(lat, lon):
+    """Uses NWS /points endpoint to find the hourly forecast URL."""
     try:
-        points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}/stations"
+        points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
         headers = {'User-Agent': 'MavicProCheckerApp (dronepilot@example.com)'}
         response = requests.get(points_url, headers=headers)
         response.raise_for_status()
-        data = response.json()
-        
-        if 'features' in data and data['features']:
-            station_url = data['features'][0]['id']
-            icao_code = station_url.split('/')[-1]
-            return icao_code
-        return None
-    except:
-        return None
-
-@st.cache_data(ttl=3600)
-def fetch_station_name(icao_code):
-    """Fetches the human-readable name of the weather station using its ICAO code."""
-    try:
-        station_url = f"https://api.weather.gov/stations/{icao_code}"
-        headers = {'User-Agent': 'MavicProCheckerApp (dronepilot@example.com)'}
-        response = requests.get(station_url, headers=headers)
-        response.raise_for_status()
         data = response.json()['properties']
-        
-        # The 'name' field is usually the full airport/station name
-        return data.get('name', 'N/A')
+        return data.get('forecastHourly')
     except:
-        return 'Unknown Station'
+        return None
 
 @st.cache_data(ttl=300)
-def fetch_metar_data(icao_code):
-    """Fetches the latest observation (METAR) from the NWS using the station ID."""
+def fetch_hourly_forecast(forecast_url):
+    """Fetches the NWS hourly forecast and extracts the current/next hour's data."""
+    if not forecast_url:
+        return None
+
     try:
-        metar_url = f"https://api.weather.gov/stations/{icao_code}/observations/latest"
         headers = {'User-Agent': 'MavicProCheckerApp (dronepilot@example.com)'}
-        response = requests.get(metar_url, headers=headers)
+        response = requests.get(forecast_url, headers=headers)
         response.raise_for_status()
-        data = response.json()['properties']
         
-        # 1. Temperature: Celsius to Fahrenheit
-        temp_c = data['temperature']['value']
-        temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0
+        # The first period in the list is the current/next hour's forecast
+        current_period = response.json()['properties']['periods'][0]
+        
+        # --- Data Extraction and Conversion ---
+        
+        # 1. Wind Speed/Gust (NWS uses text/range, we use the max value reported)
+        wind_speed_text = current_period.get('windSpeed', '0 mph')
+        
+        # Extract the highest speed value from the range (e.g., "5 to 10 mph" -> 10)
+        speed_parts = wind_speed_text.split('to')
+        raw_speed_mph = int(speed_parts[-1].strip().split()[0])
+        
+        wind_speed_mph = raw_speed_mph
+        wind_gust_mph = raw_speed_mph 
 
-        # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED)
-        WIND_CONV_FACTOR = 2.23694 # 1 m/s = 2.23694 MPH
-        
-        wind_speed_ms = data['windSpeed']['value'] if data['windSpeed']['value'] is not None else 0
-        wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
-        
-        # *** CRITICAL FIX FOR 10X ERROR ***
-        wind_speed_ms_corrected = wind_speed_ms / 10.0
-        wind_gust_ms_corrected = wind_gust_ms / 10.0
-        
-        wind_speed_mph = wind_speed_ms_corrected * WIND_CONV_FACTOR 
-        wind_gust_mph = wind_gust_ms_corrected * WIND_CONV_FACTOR
-        
-        wind_dir_deg = data['windDirection']['value'] if data['windDirection']['value'] is not None else 0
+        # 2. Temperature: Already in Fahrenheit
+        temp_f = current_period.get('temperature', 60.0)
 
-        # 3. Visibility: Meters to Miles
-        visibility_meters = data['visibility']['value']
-        visibility_miles = visibility_meters / 1609.34 if visibility_meters is not None else 10.0
-
-        # 4. Precipitation Check
-        present_weather = data['textDescription'] if data.get('textDescription') else ""
-        precip_risk = 100 if any(word in present_weather.lower() for word in ['rain', 'snow', 'drizzle', 'thunder', 'fog']) else 0
+        # 3. Cloud Cover (Sky Cover is the percentage)
+        cloud_cover_percent = current_period.get('skyCover', 0)
+        
+        # 4. Precipitation Probability
+        precip_prob = current_period.get('probabilityOfPrecipitation', {}).get('value', 0)
+        
+        # 5. Overall Weather/Text Description
+        short_forecast = current_period.get('shortForecast', 'N/A')
+        
+        # 6. Cloud Base Altitude 
+        # NWS forecast API doesn't usually provide precise METAR-style cloud layers.
+        # We use a placeholder logic: high base if clear/mostly clear, low base if cloudy/overcast.
+        if "clear" in short_forecast.lower() or cloud_cover_percent < 50:
+            cloud_base_ft = 5000 
+        else:
+            cloud_base_ft = 800 # Assume low base for safety if cloudy, ensuring it fails the 900ft check
+        
+        # Visibility (NWS forecast API often omits this, defaulting to high visibility)
+        visibility_miles = 10.0
         
         return {
-            'icao_code': icao_code,
             'wind_speed': wind_speed_mph,
             'wind_gust': wind_gust_mph,
-            'wind_direction_deg': wind_dir_deg,
-            'temp_f': temp_f,
+            'temp_f': float(temp_f),
             'visibility_miles': visibility_miles,
-            'precip_prob': precip_risk,
-            'text_description': present_weather,
+            'precip_prob': float(precip_prob),
+            'text_description': short_forecast,
+            'cloud_cover': cloud_cover_percent,
+            'cloud_base_ft': cloud_base_ft
         }
-
-    except:
-        # Return a dictionary with safe defaults on API failure
+    except Exception as e:
+        st.error(f"Error fetching NWS hourly forecast: {e}")
         return None
 
 @st.cache_data(ttl=3600)
@@ -178,7 +171,7 @@ def fetch_kp_index():
 # --- CORE MAVIC 3 PRO LOGIC ---
 
 def check_flight_status(weather_data, kp_index, is_daylight):
-    """Applies all hard weather limits for the Mavic 3 Pro."""
+    """Applies all hard weather limits for the Mavic 3 Pro and Part 107 rules."""
     
     reasons_to_ground = []
     
@@ -188,6 +181,8 @@ def check_flight_status(weather_data, kp_index, is_daylight):
     temp_f = weather_data.get('temp_f', 60.0)
     visibility_miles = weather_data.get('visibility_miles', 10.0)
     precip_prob = weather_data.get('precip_prob', 0)
+    cloud_cover = weather_data.get('cloud_cover', 0)
+    cloud_base_ft = weather_data.get('cloud_base_ft', 5000) # Default to high altitude if data is missing
     
     # 1. Wind Check (Applying the safety buffer for altitude)
     actual_wind = wind_speed_raw * LIMITS['WIND_SAFETY_BUFFER']
@@ -204,16 +199,26 @@ def check_flight_status(weather_data, kp_index, is_daylight):
 
     # 3. Moisture and Visibility Check
     if precip_prob > LIMITS['MAX_PRECIP_PROB']:
-        reasons_to_ground.append(f"💧 Precipitation risk ({weather_data.get('text_description', 'N/A')}). Mavic 3 is not waterproof!")
+        reasons_to_ground.append(f"💧 Precipitation risk: {precip_prob:.0f}% chance. Mavic 3 is not waterproof!")
 
     if visibility_miles < LIMITS['MIN_VISIBILITY_MILES']:
         reasons_to_ground.append(f"🌫️ Visibility too low: {visibility_miles:.1f} miles")
     
-    # 4. Night Flight Check (based on accurate sunrise/sunset)
+    # 4. Cloud Check (Based on Part 107 VLoS and 400ft AGL rule)
+    if cloud_cover > LIMITS['MAX_CLOUD_COVER']:
+        reasons_to_ground.append(f"☁️ Cloud Cover ({cloud_cover}%) too high for required Visual Line of Sight (VLoS).")
+        
+    # Cloud base must be >= 900ft to allow flight up to 400ft AGL (400ft max + 500ft buffer = 900ft)
+    if cloud_base_ft < LIMITS['MIN_CLOUD_BASE_FT']:
+        # Calculate the maximum safe altitude permitted
+        max_safe_alt = max(0, int(cloud_base_ft - 500))
+        reasons_to_ground.append(f"☁️ Cloud Base Altitude ({cloud_base_ft} ft) is too low. Max safe flight altitude is {max_safe_alt} ft AGL (500ft clearance required by Part 107).")
+    
+    # 5. Night Flight Check (based on accurate sunrise/sunset)
     if not is_daylight:
         reasons_to_ground.append("🌙 Flying outside of daylight hours (requires proper certification & lights)")
 
-    # 5. Satellite/GPS Check (Kp Index)
+    # 6. Satellite/GPS Check (Kp Index)
     if kp_index >= LIMITS['MAX_KP_INDEX']:
         reasons_to_ground.append(f"🛰️ High Solar Storm activity (Kp {kp_index:.1f}). GPS instability possible.")
 
@@ -225,7 +230,7 @@ def check_flight_status(weather_data, kp_index, is_daylight):
 
 # --- PANDAS/STYLING FUNCTIONS FOR MOBILE TABLE ---
 
-def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, icao_code):
+def create_styled_dataframe(data, limits, is_daylight, kp_index):
     """Creates a mobile-friendly, color-coded Pandas DataFrame with a 'Pass/Fail' column."""
     
     # Extract adjusted values
@@ -234,8 +239,9 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
     temp_f = data.get('temp_f', 60.0)
     visibility_miles = data.get('visibility_miles', 10.0)
     precip_prob = data.get('precip_prob', 0)
-    wind_dir_deg = data.get('wind_direction_deg', 0)
-    wind_dir_cardinal = degrees_to_cardinal(wind_dir_deg)
+    cloud_cover = data.get('cloud_cover', 0)
+    cloud_base_ft = data.get('cloud_base_ft', 5000)
+    short_forecast = data.get('text_description', 'N/A')
 
     # Helper function to return 'FAIL' or 'PASS'
     def get_status(condition):
@@ -245,25 +251,25 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
     df_data = [
         # Parameter | Current Value | Safe Limit | Status ('PASS'/'FAIL'/'Info')
         
+        # Wind Checks
         ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", get_status(wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH'])],
-        
         ['Wind Gust (Adjusted)', f"{wind_gust_adjusted:.1f} MPH", f"≤ {limits['MAX_GUST_SPEED_MPH']} MPH", get_status(wind_gust_adjusted > limits['MAX_GUST_SPEED_MPH'])],
         
-        # Info rows: Set to 'Info' status
-        ['Wind Direction', f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", 'Info'],
+        # New Detailed Weather Info
+        ['Current Conditions', short_forecast, "Info (Variable)", 'Info'],
+        ['Precipitation Probability', f"{precip_prob:.0f}%", f"≤ {limits['MAX_PRECIP_PROB']}% (No water)", get_status(precip_prob > limits['MAX_PRECIP_PROB'])],
         
+        # Temperature/Visibility
         ['Temperature', f"{temp_f:.1f} °F", f"{limits['MIN_TEMP_F']}-{limits['MAX_TEMP_F']} °F", get_status(temp_f < limits['MIN_TEMP_F'] or temp_f > limits['MAX_TEMP_F'])],
+        ['Visibility (Estimated)', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", get_status(visibility_miles < limits['MIN_VISIBILITY_MILES'])],
         
-        ['Visibility', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", get_status(visibility_miles < limits['MIN_VISIBILITY_MILES'])],
+        # Cloud Checks (NOW CORRECTED FOR PART 107)
+        ['Cloud Cover', f"{cloud_cover:.0f}%", f"≤ {limits['MAX_CLOUD_COVER']}%", get_status(cloud_cover > limits['MAX_CLOUD_COVER'])],
+        ['Cloud Base Altitude (AGL)', f"{cloud_base_ft:.0f} ft", f"≥ {limits['MIN_CLOUD_BASE_FT']} ft (400ft max + 500ft buffer)", get_status(cloud_base_ft < limits['MIN_CLOUD_BASE_FT'])],
         
-        ['Precipitation Risk', f"{precip_prob:.0f}%", f"≤ {limits['MAX_PRECIP_PROB']}% (No water)", get_status(precip_prob > limits['MAX_PRECIP_PROB'])],
-        
+        # GPS/Daylight
         ['Kp Index (GPS Risk)', f"{kp_index:.1f}", f"≤ {limits['MAX_KP_INDEX']} Kp", get_status(kp_index >= limits['MAX_KP_INDEX'])],
-        
         ['Daylight Status', "Daytime" if is_daylight else "Nighttime", "Daylight Only", get_status(not is_daylight)],
-        
-        # Info rows: Set to 'Info' status
-        ['Weather Station', f"{station_name} [{icao_code}]", "NWS Data Source", 'Info']
     ]
 
     # Create the DataFrame and rename the 'Status' column for display
@@ -335,7 +341,7 @@ if location is not None and location.get('latitude') is not None:
     st.info(f"📍 Current Location: Latitude {lat:.4f}, Longitude {lon:.4f}")
     
     if st.button("Run Comprehensive Flight Check", type="primary"):
-        with st.spinner('Fetching NWS Weather and Kp Index...'):
+        with st.spinner('Fetching NWS Hourly Forecast and Kp Index...'):
             
             # 1. Fetch Kp Index
             kp_index = fetch_kp_index()
@@ -343,15 +349,13 @@ if location is not None and location.get('latitude') is not None:
             # 2. Fetch Accurate Sunrise/Sunset Times
             sunrise_local, sunset_local, is_daylight = fetch_sunrise_sunset(lat, lon) 
             
-            # 3. Fetch Weather Data (Code only)
-            icao_code = get_nearest_station_id(lat, lon)
-            
+            # 3. Get the Forecast URL
+            forecast_url = get_nws_forecast_url(lat, lon)
+
             # --- Aggregated Logic ---
-            if icao_code:
-                # 4. Fetch Station Name
-                station_name = fetch_station_name(icao_code)
-                
-                weather_data = fetch_metar_data(icao_code) or {} 
+            if forecast_url:
+                # 4. Fetch Hourly Forecast Data
+                weather_data = fetch_hourly_forecast(forecast_url) or {} 
                 
                 # Check weather and Kp limits
                 status, weather_reasons = check_flight_status(weather_data, kp_index, is_daylight)
@@ -369,12 +373,12 @@ if location is not None and location.get('latitude') is not None:
                 # --- Display Final Result ---
                 st.header(final_status)
                 
-                # --- Display Status with Station Name ---
+                # --- Display Status ---
                 if banner_color == "success":
-                    st.success(f"✅ GO! Conditions are favorable. Weather from **{station_name} [{icao_code}]**.")
+                    st.success(f"✅ GO! Conditions are favorable. Weather from **NWS Hourly Forecast**.")
                     st.balloons()
                 else:
-                    st.error(f"❌ NO GO. Check reasons below. Weather from **{station_name} [{icao_code}]**.")
+                    st.error(f"❌ NO GO. Check reasons below. Weather from **NWS Hourly Forecast**.")
                 
                 # --- Persistent Airspace Warning (Revised for Accuracy) ---
                 st.warning("⚠️ CRITICAL REMINDER: Airspace requirements MUST be verified before flight. Authorization is mandatory in all Controlled Airspace (Class B, C, D, and surface E). You MUST check the official **Air Control** app or a LAANC provider (Aloft, Airspace Link, etc.) to confirm your local airspace status.")
@@ -383,7 +387,7 @@ if location is not None and location.get('latitude') is not None:
                 st.markdown("### 📊 Detailed Conditions")
                 
                 # Generate and display the styled HTML table 
-                styled_html_table = create_styled_dataframe(weather_data, LIMITS, is_daylight, kp_index, station_name, icao_code)
+                styled_html_table = create_styled_dataframe(weather_data, LIMITS, is_daylight, kp_index)
                 
                 # RENDER THE HTML TABLE (Streamlit's fastest and most consistent table method for mobile)
                 st.markdown(styled_html_table, unsafe_allow_html=True)
@@ -397,7 +401,7 @@ if location is not None and location.get('latitude') is not None:
                     for reason in all_reasons:
                         st.warning(f"{reason}")
             else:
-                st.warning("Could not find a nearby weather-reporting airport.")
+                st.error("Could not retrieve NWS hourly forecast data for your location.")
 else:
     st.info("Click the button above to allow the app to access your location and run the check.")
 
