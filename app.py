@@ -239,9 +239,9 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
 
     # 1. Define the DataFrame structure
     df_data = [
-        # Parameter | Current Value | Safe Limit
+        # Parameter | Current Value | Safe Limit | Failed (Boolean for styling)
         
-        # Wind Speed (Adjusted) - Includes tooltip explanation for mobile users to tap and hold
+        # Wind Speed (Adjusted)
         ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH']],
         
         # Wind Gust (Adjusted)
@@ -283,10 +283,11 @@ def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, i
             return ['background-color: #ccffcc'] * len(s) # Green background for passing rows
 
     # 3. Apply the styling
-    # Note: We must hide the 'Failed' column for display
-    styled_df = df.style.apply(color_status, axis=1).hide(columns=['Failed']).set_properties(
+    # --- FIX APPLIED HERE: Using hide(axis='columns', names=[...]) instead of hide(columns=[...]) ---
+    styled_df = df.style.apply(color_status, axis=1).hide(axis='columns', names=['Failed']).set_properties(
         **{'font-size': '14pt', 'padding': '8px'} # Improve mobile padding
     ).to_html() 
+    # --------------------------------------------------------------------------------------------------
 
     # 4. Manually insert the tooltip into the HTML for mobile
     # Since st.dataframe doesn't support <abbr> directly, we inject it into the final HTML
@@ -380,7 +381,7 @@ if location is not None and location.get('latitude') is not None:
                 st.markdown(styled_html_table, unsafe_allow_html=True)
 
                 st.markdown("---")
-                # Removed the complex date/time calculation from the table and put it here:
+                # Sunlight window reminder:
                 st.markdown(f"**☀️ Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
 
                 if all_reasons:
