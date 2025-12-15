@@ -18,42 +18,11 @@ LIMITS = {
     'WIND_SAFETY_BUFFER': 1.25      # Safety factor for ground wind at altitude
 }
 
-# --- Utility Functions ---
+# NOTE: Set your local timezone for accurate daylight calculations!
+# Example: 'America/New_York', 'America/Los_Angeles', 'Europe/London'
+LOCAL_TIMEZONE = 'America/Chicago' 
 
-def fetch_sunrise_sunset(lat, lon):
-    """Fetches accurate sunrise and sunset times for the given coordinates."""
-    try:
-        # Date is current date
-        ss_url = f"https://api.sunrise-sunset.org/json?lat={lat}&lng={lon}&formatted=0"
-        response = requests.get(ss_url)
-        response.raise_for_status()
-        data = response.json()['results']
-        
-        # Convert UTC strings to datetime objects and localize
-        utc_tz = pytz.timezone('UTC')
-        local_tz = pytz.timezone('America/Chicago') # Assuming your local timezone
-        
-        # Convert and localize the sunrise time
-        sunrise_utc = datetime.strptime(data['sunrise'], '%Y-%m-%dT%H:%M:%S+00:00')
-        sunrise_local = utc_tz.localize(sunrise_utc).astimezone(local_tz).time()
-        
-        # Convert and localize the sunset time
-        sunset_utc = datetime.strptime(data['sunset'], '%Y-%m-%dT%H:%M:%S+00:00')
-        sunset_local = utc_tz.localize(sunset_utc).astimezone(local_tz).time()
-        
-        now_time = datetime.now(local_tz).time()
-        is_daylight = (now_time >= sunrise_local and now_time <= sunset_local)
-        
-        return sunrise_local, sunset_local, is_daylight
-        
-    except Exception as e:
-        # Fallback to a fixed placeholder if the API fails
-        st.warning(f"Sunrise/Sunset API failed: {e}. Using fixed 06:00-19:00 window.")
-        sunrise_ph = datetime(2000, 1, 1, 6, 0).time() 
-        sunset_ph = datetime(2000, 1, 1, 19, 0).time() 
-        now_time = datetime.now().time()
-        is_daylight = (now_time >= sunrise_ph and now_time <= sunset_ph)
-        return sunrise_ph, sunset_ph, is_daylight
+# --- Utility Functions ---
 
 def degrees_to_cardinal(deg):
     """Converts wind degrees (0-360) to a cardinal direction (N, NE, SW, etc.)."""
@@ -64,27 +33,62 @@ def degrees_to_cardinal(deg):
 
 # --- API Fetching Functions (100% Free) ---
 
+@st.cache_data(ttl=3600)
+def fetch_sunrise_sunset(lat, lon):
+    """
+    Fetches accurate sunrise and sunset times for the given coordinates (Keyless API).
+    Caches result for 1 hour (3600 seconds).
+    """
+    try:
+        ss_url = f"https://api.sunrise-sunset.org/json?lat={lat:.4f}&lng={lon:.4f}&formatted=0"
+        response = requests.get(ss_url)
+        response.raise_for_status()
+        data = response.json()['results']
+        
+        utc_tz = pytz.utc
+        local_tz = pytz.timezone(LOCAL_TIMEZONE)
+        
+        # Convert and localize the sunrise time
+        sunrise_utc = datetime.strptime(data['sunrise'], '%Y-%m-%dT%H:%M:%S+00:00').replace(tzinfo=utc_tz)
+        sunrise_local = sunrise_utc.astimezone(local_tz).time()
+        
+        # Convert and localize the sunset time
+        sunset_utc = datetime.strptime(data['sunset'], '%Y-%m-%dT%H:%M:%S+00:00').replace(tzinfo=utc_tz)
+        sunset_local = sunset_utc.astimezone(local_tz).time()
+        
+        now_time = datetime.now(local_tz).time()
+        is_daylight = (now_time >= sunrise_local and now_time <= sunset_local)
+        
+        return sunrise_local, sunset_local, is_daylight
+        
+    except Exception as e:
+        # Fallback to a safe, fixed placeholder if the API fails
+        st.warning(f"Sunrise/Sunset API failed. Using fixed 06:00-19:00 window.")
+        sunrise_ph = datetime(2000, 1, 1, 6, 0).time() 
+        sunset_ph = datetime(2000, 1, 1, 19, 0).time() 
+        now_time = datetime.now().time()
+        is_daylight = (now_time >= sunrise_ph and now_time <= sunset_ph)
+        return sunrise_ph, sunset_ph, is_daylight
+
+@st.cache_data(ttl=300)
 def get_nearest_station_id(lat, lon):
     """Uses NWS /points endpoint to find the closest observation station ID (ICAO)."""
     try:
         points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}/stations"
-        
-        # NWS requires a custom User-Agent header
         headers = {'User-Agent': 'MavicProCheckerApp (dronepilot@example.com)'}
         response = requests.get(points_url, headers=headers)
         response.raise_for_status()
         data = response.json()
         
         if 'features' in data and data['features']:
-            # The station ID (ICAO) is the last part of the 'id' URL
             station_url = data['features'][0]['id']
             icao_code = station_url.split('/')[-1]
             return icao_code
         return None
-    except Exception as e:
-        # st.error(f"Error finding nearest station from NWS: {e}") # Suppress for cleaner UI
+    except:
         return None
 
+@st.cache_data(ttl=300)
 def fetch_metar_data(icao_code):
     """Fetches the latest observation (METAR) from the NWS using the station ID."""
     try:
@@ -94,8 +98,6 @@ def fetch_metar_data(icao_code):
         response.raise_for_status()
         data = response.json()['properties']
         
-        # Extract essential properties, handling possible None values
-        
         # 1. Temperature: Celsius to Fahrenheit
         temp_c = data['temperature']['value']
         temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0
@@ -103,32 +105,17 @@ def fetch_metar_data(icao_code):
         # 2. Wind Speed and Gust: m/s to MPH (1 m/s ≈ 2.237 mph)
         wind_speed_ms = data['windSpeed']['value'] if data['windSpeed']['value'] is not None else 0
         wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
-        
         wind_speed_mph = wind_speed_ms * 2.237 
         wind_gust_mph = wind_gust_ms * 2.237
-        
-        # 3. Wind Direction: Degrees (0-360)
         wind_dir_deg = data['windDirection']['value'] if data['windDirection']['value'] is not None else 0
 
-        # 4. Visibility: Meters to Miles
+        # 3. Visibility: Meters to Miles
         visibility_meters = data['visibility']['value']
         visibility_miles = visibility_meters / 1609.34 if visibility_meters is not None else 10.0
 
-        # 5. Precipitation Check (simplified from text description)
+        # 4. Precipitation Check (simplified from text description)
         present_weather = data['textDescription'] if data.get('textDescription') else ""
         precip_risk = 100 if any(word in present_weather.lower() for word in ['rain', 'snow', 'drizzle', 'thunder', 'fog']) else 0
-        
-        # 6. Sunrise/Sunset (fetched via separate NWS call, or a simplified calculation)
-        # NWS observation data doesn't include sunset/sunrise. Use a placeholder or a dedicated library if needed.
-        # For this version, we'll use a placeholder for day/night check only.
-        local_tz = pytz.timezone('America/Chicago')
-        now_time = datetime.now(local_tz).time()
-        
-        # Placeholder for simplicity: check between 6am and 7pm
-        sunrise_ph = local_tz.localize(datetime(2000, 1, 1, 6, 0)).time() 
-        sunset_ph = local_tz.localize(datetime(2000, 1, 1, 19, 0)).time() 
-        
-        # In a production app, you'd use a sunrise library or different API for accuracy.
         
         return {
             'icao_code': icao_code,
@@ -139,15 +126,12 @@ def fetch_metar_data(icao_code):
             'visibility_miles': visibility_miles,
             'precip_prob': precip_risk,
             'text_description': present_weather,
-            'sunrise': sunrise_ph,
-            'sunset': sunset_ph,
-            'is_daylight': (now_time >= sunrise_ph and now_time <= sunset_ph)
         }
 
-    except Exception as e:
-        # st.error(f"Error fetching latest observation for {icao_code}: {e}") # Suppress for cleaner UI
+    except:
         return None
 
+@st.cache_data(ttl=3600)
 def fetch_kp_index():
     """Fetches the latest OBSERVED Kp Index from NOAA SWPC (free, no key, JSON format)."""
     kp_url = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json"
@@ -157,43 +141,35 @@ def fetch_kp_index():
         response.raise_for_status()
         data = response.json()
         
-        # Data starts from the second element (index 1).
+        # Iterate backward through the data to find the most recent 'observed' Kp value.
         for row in reversed(data[1:]): 
             time_tag, kp_value_str, status, noaa_scale = row
             
             if status == "observed":
                 latest_kp = float(kp_value_str)
                 return latest_kp
-        return 0.0 # Default if no 'observed' value is found
+        return 0.0
         
-    except Exception as e:
-        # st.warning(f"Error fetching Kp Index: {e}.") # Suppress for cleaner UI
+    except:
         return 0.0
 
 def check_airspace(lat, lon):
     """
-    Since free, reliable airspace APIs are unavailable, this function
-    provides a strong warning and directs the user to an official FAA source.
+    Provides a CRITICAL warning for manual airspace check, as free APIs are unreliable/unavailable.
+    This check intentionally fails to force manual pilot verification.
     """
-    airspace_url = "http://api.openaip.net/api/airspaces" # Placeholder for failed API
+    # NOTE: The previous API failed. It is safer to force a manual check than rely on a broken free service.
     
-    try:
-        # Intentionally raise an exception here or remove the code entirely
-        # to ensure the user always gets a manual check, as a failed check is dangerous.
-        raise requests.exceptions.RequestException("OpenAIP API no longer free/keyless.") 
-        
-    except Exception as e:
-        # Provide the strongest possible warning and the official solution
-        reasons = [
-            "🔴 CRITICAL SAFETY CHECK FAILED: Could not access free Airspace Data API.",
-            "YOU MUST check the FAA's B4UFLY App or your LAANC provider (Aloft, Airspace Link, etc.) before flying.",
-            "Your location may be in Class B/C/D controlled airspace, TFR, or a prohibited zone."
-        ]
-        return "WARNING", reasons
+    reasons = [
+        "🔴 CRITICAL SAFETY CHECK FAILED: The free Airspace Data API is currently unavailable or unstable.",
+        "YOU MUST check the FAA's B4UFLY App or your LAANC provider (Aloft, Airspace Link, etc.) before flying.",
+        "Your location may be in Class B/C/D controlled airspace, TFR, or a prohibited zone."
+    ]
+    return "WARNING", reasons
 
 # --- CORE MAVIC 3 PRO LOGIC ---
 
-def check_flight_status(weather_data, kp_index):
+def check_flight_status(weather_data, kp_index, is_daylight):
     """Applies all hard weather limits for the Mavic 3 Pro."""
     
     reasons_to_ground = []
@@ -218,8 +194,8 @@ def check_flight_status(weather_data, kp_index):
     if weather_data['visibility_miles'] < LIMITS['MIN_VISIBILITY_MILES']:
         reasons_to_ground.append(f"🌫️ Visibility too low: {weather_data['visibility_miles']:.1f} miles")
     
-    # 4. Night Flight Check (based on simple placeholder for demonstration)
-    if not weather_data['is_daylight']:
+    # 4. Night Flight Check (based on accurate sunrise/sunset)
+    if not is_daylight:
         reasons_to_ground.append("🌙 Flying outside of daylight hours (requires proper certification & lights)")
 
     # 5. Satellite/GPS Check (Kp Index)
@@ -255,15 +231,18 @@ if location is not None and location.get('latitude') is not None:
     
     # --- Decision Button ---
     if st.button("Run Comprehensive Flight Check", type="primary"):
-        with st.spinner('Fetching NWS Weather, Kp Index, and Airspace data...'):
+        with st.spinner('Fetching NWS Weather, Kp Index, and Airspace check...'):
             
             # 1. Fetch Kp Index
             kp_index = fetch_kp_index()
             
-            # 2. Fetch Airspace Data
+            # 2. Fetch Accurate Sunrise/Sunset Times
+            sunrise_local, sunset_local, is_daylight = fetch_sunrise_sunset(lat, lon) 
+            
+            # 3. Fetch Airspace Data (Critical Warning)
             airspace_status, airspace_reasons = check_airspace(lat, lon)
             
-            # 3. Fetch Weather Data
+            # 4. Fetch Weather Data
             icao_code = get_nearest_station_id(lat, lon)
             
             # --- Aggregated Logic ---
@@ -272,13 +251,14 @@ if location is not None and location.get('latitude') is not None:
                 
                 if weather_data:
                     # Check weather and Kp limits
-                    status, weather_reasons = check_flight_status(weather_data, kp_index)
+                    status, weather_reasons = check_flight_status(weather_data, kp_index, is_daylight)
                     
                     # Combine all reasons (Weather/Kp + Airspace)
                     all_reasons = weather_reasons + airspace_reasons
                     
                     final_status = "READY TO LAUNCH"
-                    if status == "DON'T FLY" or airspace_status == "RESTRICTED" or airspace_status == "WARNING":
+                    # If EITHER weather/KP says DON'T FLY OR airspace returns a WARNING/RESTRICTED
+                    if status == "DON'T FLY" or airspace_status == "WARNING":
                         final_status = "DON'T FLY"
 
                     # --- Display Final Result ---
@@ -311,7 +291,7 @@ if location is not None and location.get('latitude') is not None:
                     col2.metric("Kp Index (GPS Risk)", f"{kp_index:.1f}", f"(Max Safe: {LIMITS['MAX_KP_INDEX']} Kp)")
                     
                     st.markdown("---")
-                    st.markdown(f"**Sunlight Window:** {weather_data['sunrise'].strftime('%I:%M %p')} to {weather_data['sunset'].strftime('%I:%M %p')}")
+                    st.markdown(f"**Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
 
 
                     if all_reasons:
