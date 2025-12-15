@@ -23,79 +23,80 @@ AVIATION_EDGE_KEY = 'YOUR_AVIATION_EDGE_KEY'
 
 # Aviation Edge API endpoint for finding the nearest METAR station
 # This is a two-step process: 1. Find the nearest airport, 2. Get its METAR
-def get_nearest_metar_code(lat, lon):
-    """Finds the ICAO code for the nearest weather-reporting station."""
-    print(f"Searching for nearest station to {lat}, {lon}...")
-    
-    # Aviation Edge URL to find the nearest airport to coordinates
-    url = (
-        "https://aviation-edge.com/v2/public/nearby?"
-        f"key={AVIATION_EDGE_KEY}&lat={lat}&lng={lon}&distance=20&type=airport"
-    )
-    
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        airports = response.json()
-        
-        # Look for the first result that has an ICAO code (the code used for METAR)
-        if airports and 'airport' in airports[0]:
-            icao_code = airports[0]['airport']['icaoCode']
-            print(f"Found nearest ICAO code: {icao_code}")
-            return icao_code
-        return None
-    except Exception as e:
-        st.error(f"Error finding nearest airport: {e}")
-        return None
+# --- FREE API FUNCTIONS (AWC/NWS) ---
 
-def fetch_metar_data(icao_code):
-    """Fetches METAR data for the given ICAO code."""
-    # Using Aviation Edge's METAR endpoint
-    url = (
-        "https://aviation-edge.com/v2/public/metar?"
-        f"key={AVIATION_EDGE_EDGE_KEY}&code={icao_code}&format=json"
-    )
-    
+def get_nearest_station_id(lat, lon):
+    """Uses NWS /points endpoint to find the closest observation station ID."""
     try:
-        response = requests.get(url)
+        # Step 1: Find all nearby stations
+        points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}/stations"
+        
+        # NOTE: NWS requires a custom User-Agent header (use your name/email)
+        headers = {'User-Agent': 'MavicProCheckerApp (randylormand@example.com)'}
+        response = requests.get(points_url, headers=headers)
         response.raise_for_status()
         data = response.json()
         
-        # Aviation Edge METAR structure is complex; this is a simplified extraction
-        if data and 'metar' in data[0] and 'weather_elements' in data[0]:
-            metar = data[0]
-            elements = metar['weather_elements']
-            
-            # Wind data often requires conversion from meters/second or knots (API dependent)
-            # Assuming you can adjust this based on the exact format provided by your chosen API.
-            # Here we will simulate a simple weather output:
-            
-            # NOTE: For real deployment, you must convert the API's wind (knots)
-            # and temp (Celsius) into your required units (MPH and Fahrenheit).
-            
-            # --- SIMULATED DATA EXTRACTION ---
-            # This part needs to be accurately mapped to the AviationEdge response.
-            # Example:
-            
-            # wind_speed_knots = elements.get('wind_speed', 0) 
-            # wind_gust_knots = elements.get('wind_gust', 0)
-            # visibility_meters = elements.get('visibility_meters', 10000)
-            # temp_c = elements.get('temperature_c', 20)
-            
-            # For demonstration, we'll return a placeholder structure:
-            return {
-                'icao_code': icao_code,
-                'wind_speed': 15.0, # MPH
-                'wind_gust': 20.0, # MPH
-                'temp_f': 65.0, # F
-                'visibility_miles': 5.0, # Miles
-                'precip_prob': 0, # Placeholder, METAR handles weather conditions (rain, snow)
-                'source_text': metar['text'] # Raw METAR text
-            }
+        # The first feature in the list is typically the closest station
+        if 'features' in data and data['features']:
+            # The station ID is typically the last segment of the @id URL
+            station_url = data['features'][0]['@id']
+            # Split the URL and take the last part (the ICAO/ID)
+            icao_code = station_url.split('/')[-1]
+            return icao_code
         return None
     except Exception as e:
-        st.error(f"Error fetching METAR data: {e}")
+        st.error(f"Error finding nearest station from NWS: {e}")
         return None
+
+def fetch_metar_data(icao_code):
+    """Fetches the latest observation (METAR) from the NWS using the station ID."""
+    try:
+        # Step 2: Fetch the latest observation
+        metar_url = f"https://api.weather.gov/stations/{icao_code}/observations/latest"
+        headers = {'User-Agent': 'MavicProCheckerApp (randylormand@example.com)'}
+        response = requests.get(metar_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()['properties']
+        
+        # Data Extraction and Conversion from NWS
+        # The NWS data is already in a clean format, but uses Metric/Scientific units
+        
+        # 1. Temperature: Celsius to Fahrenheit
+        temp_c = data['temperature']['value']
+        temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0 # Default if null
+
+        # 2. Wind: Knots to MPH (1 knot = 1.15078 MPH)
+        wind_speed_knots = data['windSpeed']['value'] / 1.852 if data['windSpeed']['value'] is not None else 0 # m/s to knots
+        wind_speed_mph = wind_speed_knots * 1.15078
+
+        wind_gust_knots = data['windGust']['value'] / 1.852 if data['windGust']['value'] is not None else wind_speed_knots # m/s to knots
+        wind_gust_mph = wind_gust_knots * 1.15078
+
+        # 3. Visibility: Meters to Miles (1 mile = 1609.34 meters)
+        visibility_meters = data['visibility']['value']
+        visibility_miles = visibility_meters / 1609.34 if visibility_meters is not None else 10.0
+        
+        # 4. Weather: Check if any "present weather" is reported (rain, snow, etc.)
+        # This will be simplified to a simple boolean check
+        present_weather = data['textDescription'] if data.get('textDescription') else ""
+        precip_risk = 100 if any(word in present_weather.lower() for word in ['rain', 'snow', 'shower', 'drizzle', 'thunder']) else 0
+        
+        return {
+            'icao_code': icao_code,
+            'wind_speed': wind_speed_mph,
+            'wind_gust': wind_gust_mph,
+            'temp_f': temp_f,
+            'visibility_miles': visibility_miles,
+            'precip_prob': precip_risk,
+            'source_text': present_weather 
+        }
+
+    except Exception as e:
+        st.error(f"Error fetching latest observation for {icao_code}: {e}")
+        return None
+
+# NOTE: You will also need to re-integrate the Kp index fetch (which is also free).
 
 # --- CORE MAVIC 3 PRO LOGIC (Simplified from previous response) ---
 def check_flight_status(weather_data):
