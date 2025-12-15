@@ -104,30 +104,31 @@ def fetch_metar_data(icao_code):
 
 # --- CORE MAVIC 3 PRO LOGIC (Simplified from previous response) ---
 def fetch_kp_index():
-    """Fetches the latest estimated Kp Index from NOAA SWPC (free, no key)."""
-    # NOAA SWPC uses a text file for simplicity. We parse the last line.
-    kp_url = "https://services.swpc.noaa.gov/products/noaa-estimated-planetary-kindex-dst.txt"
+    """Fetches the latest OBSERVED Kp Index from NOAA SWPC (free, no key, JSON format)."""
+    # URL for the NOAA SWPC Kp index forecast data (includes latest observation)
+    kp_url = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json"
     
     try:
         response = requests.get(kp_url)
-        response.raise_for_status()
+        response.raise_for_status() # Check for 404, etc.
+        data = response.json()
         
-        # Read the content and split by line
-        lines = response.text.strip().split('\n')
+        # The first element is the header: ["time_tag", "kp", "observed", "noaa_scale"]
+        # The data starts from the second element (index 1).
         
-        # The first line is header. We want the last actual data line.
-        if len(lines) > 1:
-            # Data is space-separated: [date, time, Kp_value, ...]
-            last_line = lines[-1]
-            fields = last_line.split()
+        # Iterate backward through the data to find the most recent 'observed' Kp value.
+        for row in reversed(data[1:]): 
+            # Row format: ["2025-12-14 18:00:00", "2.00", "observed", null]
+            time_tag, kp_value_str, status, noaa_scale = row
             
-            # The Kp index is the third field (index 2)
-            kp_index = float(fields[2])
-            
-            st.info(f"Geomagnetic Check: Kp Index {kp_index:.1f} (Source: NOAA SWPC)")
-            return kp_index
+            if status == "observed":
+                latest_kp = float(kp_value_str)
+                st.info(f"Geomagnetic Check: Kp Index {latest_kp:.1f} (Source: NOAA SWPC)")
+                return latest_kp
         
-        return 0.0 # Default to calm if data is missing
+        # If no 'observed' value is found (which is highly unlikely)
+        return 0.0 
+        
     except Exception as e:
         st.warning(f"Error fetching Kp Index: {e}. Defaulting to Kp 0.0 (Check for GPS stability manually).")
         return 0.0
