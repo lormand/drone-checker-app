@@ -181,15 +181,24 @@ if location is not None and location.get('latitude') is not None:
     
     # --- Decision Button ---
     if st.button("Run Flight Check", type="primary"):
-        with st.spinner('Fetching nearest airport METAR and running checks...'):
-            icao_code = get_nearest_station_id(lat, lon)
+    with st.spinner('Fetching nearest airport METAR and running checks...'):
+        
+        # 1. Fetch Kp Index (New call)
+        kp_index = fetch_kp_index()
+        
+        # 2. Fetch Weather
+        icao_code = get_nearest_station_id(lat, lon)
+        
+        if icao_code:
+            # Fetch the detailed weather data
+            weather_data = fetch_metar_data(icao_code)
             
-            if icao_code:
-                # Fetch the detailed weather data
-                weather_data = fetch_metar_data(icao_code)
+            # 3. Add Kp to the data structure
+            if weather_data:
+                weather_data['kp_index'] = kp_index # Add the Kp value here
                 
-                if weather_data:
-                    status, reasons = check_flight_status(weather_data)
+                # 4. Update the call to check_flight_status to accept Kp
+                status, reasons = check_flight_status(weather_data)
                     
                     st.header(status)
                     if status == "READY TO LAUNCH":
