@@ -156,7 +156,7 @@ if location is not None and location.get('latitude') is not None:
     # --- Decision Button ---
     if st.button("Run Flight Check", type="primary"):
         with st.spinner('Fetching nearest airport METAR and running checks...'):
-            icao_code = get_nearest_metar_code(lat, lon)
+            icao_code = get_nearest_station_id(lat, lon)
             
             if icao_code:
                 # Fetch the detailed weather data
