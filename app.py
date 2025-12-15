@@ -223,6 +223,88 @@ def check_flight_status(weather_data, kp_index, is_daylight):
         return "READY TO LAUNCH", ["All weather and space weather conditions are optimal."]
 
 
+# --- PANDAS/STYLING FUNCTIONS FOR MOBILE TABLE ---
+
+def create_styled_dataframe(data, limits, is_daylight, kp_index, station_name, icao_code):
+    """Creates a mobile-friendly, color-coded Pandas DataFrame."""
+    
+    # Extract adjusted values
+    wind_speed_adjusted = data.get('wind_speed', 0.0) * limits['WIND_SAFETY_BUFFER']
+    wind_gust_adjusted = data.get('wind_gust', 0.0) * limits['WIND_SAFETY_BUFFER']
+    temp_f = data.get('temp_f', 60.0)
+    visibility_miles = data.get('visibility_miles', 10.0)
+    precip_prob = data.get('precip_prob', 0)
+    wind_dir_deg = data.get('wind_direction_deg', 0)
+    wind_dir_cardinal = degrees_to_cardinal(wind_dir_deg)
+
+    # 1. Define the DataFrame structure
+    df_data = [
+        # Parameter | Current Value | Safe Limit
+        
+        # Wind Speed (Adjusted) - Includes tooltip explanation for mobile users to tap and hold
+        ['Wind Speed (Adjusted)', f"{wind_speed_adjusted:.1f} MPH", f"≤ {limits['MAX_WIND_SPEED_MPH']} MPH", wind_speed_adjusted > limits['MAX_WIND_SPEED_MPH']],
+        
+        # Wind Gust (Adjusted)
+        ['Wind Gust (Adjusted)', f"{wind_gust_adjusted:.1f} MPH", f"≤ {limits['MAX_GUST_SPEED_MPH']} MPH", wind_gust_adjusted > limits['MAX_GUST_SPEED_MPH']],
+        
+        # Wind Direction (Info only)
+        ['Wind Direction', f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", False],
+        
+        # Temperature
+        ['Temperature', f"{temp_f:.1f} °F", f"{limits['MIN_TEMP_F']}-{limits['MAX_TEMP_F']} °F", (temp_f < limits['MIN_TEMP_F'] or temp_f > limits['MAX_TEMP_F'])],
+        
+        # Visibility
+        ['Visibility', f"{visibility_miles:.1f} miles", f"≥ {limits['MIN_VISIBILITY_MILES']} miles", visibility_miles < limits['MIN_VISIBILITY_MILES']],
+        
+        # Precipitation Risk
+        ['Precipitation Risk', f"{precip_prob:.0f}%", f"≤ {limits['MAX_PRECIP_PROB']}% (No water)", precip_prob > limits['MAX_PRECIP_PROB']],
+        
+        # Kp Index (GPS Risk)
+        ['Kp Index (GPS Risk)', f"{kp_index:.1f}", f"≤ {limits['MAX_KP_INDEX']} Kp", kp_index >= limits['MAX_KP_INDEX']],
+        
+        # Daylight Status
+        ['Daylight Status', "Daytime" if is_daylight else "Nighttime", "Daylight Only", not is_daylight],
+        
+        # Weather Station (Info only)
+        ['Weather Station', f"{station_name} [{icao_code}]", "NWS Data Source", False]
+    ]
+
+    # Create the DataFrame
+    df = pd.DataFrame(df_data, columns=['Parameter', 'Current Value', 'Safe Limit', 'Failed'])
+    
+    # 2. Define the styling function
+    def color_status(s):
+        """Applies red or green background based on the 'Failed' column."""
+        if s['Failed']:
+            return ['background-color: #ffcccc'] * len(s) # Red background for failure
+        elif s['Parameter'] in ['Wind Direction', 'Weather Station']:
+            return [''] * len(s) # No color for info rows
+        else:
+            return ['background-color: #ccffcc'] * len(s) # Green background for passing rows
+
+    # 3. Apply the styling
+    # Note: We must hide the 'Failed' column for display
+    styled_df = df.style.apply(color_status, axis=1).hide(columns=['Failed']).set_properties(
+        **{'font-size': '14pt', 'padding': '8px'} # Improve mobile padding
+    ).to_html() 
+
+    # 4. Manually insert the tooltip into the HTML for mobile
+    # Since st.dataframe doesn't support <abbr> directly, we inject it into the final HTML
+    ADJUSTED_TITLE_HTML = "title='The raw wind speed is increased by 25% (x1.25) to account for wind shear and increased turbulence at altitude (400ft AGL). This provides a critical safety buffer.'"
+    
+    # Replace the plain text with the <abbr> tag in the HTML string
+    styled_df = styled_df.replace(
+        'Wind Speed (Adjusted)', 
+        f"<abbr {ADJUSTED_TITLE_HTML}>Wind Speed (Adjusted)</abbr>"
+    )
+    styled_df = styled_df.replace(
+        'Wind Gust (Adjusted)', 
+        f"<abbr {ADJUSTED_TITLE_HTML}>Wind Gust (Adjusted)</abbr>"
+    )
+
+    return styled_df
+
+
 # --- STREAMLIT UI ---
 
 st.set_page_config(
@@ -260,7 +342,7 @@ if location is not None and location.get('latitude') is not None:
                 # 4. Fetch Station Name
                 station_name = fetch_station_name(icao_code)
                 
-                weather_data = fetch_metar_data(icao_code) or {} # Ensure weather_data is a dict even on API failure
+                weather_data = fetch_metar_data(icao_code) or {} 
                 
                 # Check weather and Kp limits
                 status, weather_reasons = check_flight_status(weather_data, kp_index, is_daylight)
@@ -288,105 +370,17 @@ if location is not None and location.get('latitude') is not None:
                 # --- Persistent Airspace Warning (Revised for Accuracy) ---
                 st.warning("⚠️ CRITICAL REMINDER: Airspace requirements MUST be verified before flight. Authorization is mandatory in all Controlled Airspace (Class B, C, D, and surface E). You MUST check the official **Air Control** app or a LAANC provider (Aloft, Airspace Link, etc.) to confirm your local airspace status.")
 
-                # --- Robust Status Display using Columns and Markdown (Stable Table) ---
+                # --- Mobile-Optimized Dataframe Display ---
                 st.markdown("### 📊 Detailed Conditions")
-
-                # Robust Value Extraction for Logic and Display
-                wind_speed_raw = weather_data.get('wind_speed', 0.0) 
-                wind_gust_raw = weather_data.get('wind_gust', 0.0)
-                temp_f = weather_data.get('temp_f', 60.0)
-                visibility_miles = weather_data.get('visibility_miles', 10.0)
-                precip_prob = weather_data.get('precip_prob', 0)
-                wind_dir_deg = weather_data.get('wind_direction_deg', 0)
-
-                wind_dir_cardinal = degrees_to_cardinal(wind_dir_deg)
-                wind_speed_adjusted = wind_speed_raw * LIMITS['WIND_SAFETY_BUFFER']
-                wind_gust_adjusted = wind_gust_raw * LIMITS['WIND_SAFETY_BUFFER']
-
-                # Define the structure for the three-column layout
-                col_param, col_current, col_limit = st.columns([3, 2, 2])
                 
-                # Column Headers
-                col_param.markdown("**Parameter**")
-                col_current.markdown("**Current Value**")
-                col_limit.markdown("**Safe Limit / Details**")
-                st.markdown("---") # Visual separator for headers
-
-                # --- Helper function for status display ---
-                def display_row(param, current, limit, status_icon, status_color):
-                    """Prints a single row with status color applied via markdown."""
-                    # Use unsafe_allow_html=True to render the <abbr> tag for tooltips
-                    col_param.markdown(f"**{status_icon} {param}**", unsafe_allow_html=True)
-                    col_current.markdown(f"<span style='color:{status_color}'>{current}</span>", unsafe_allow_html=True)
-                    col_limit.markdown(limit)
-
-                # --- Tooltip Definition ---
-                ADJUSTED_TITLE = "The raw wind speed is increased by 25% (x1.25) to account for wind shear and increased turbulence at altitude (400ft AGL). This provides a critical safety buffer."
-
-                # --- Row Logic ---
+                # Generate and display the styled HTML table 
+                styled_html_table = create_styled_dataframe(weather_data, LIMITS, is_daylight, kp_index, station_name, icao_code)
                 
-                # 1. Wind Speed
-                if wind_speed_adjusted > LIMITS['MAX_WIND_SPEED_MPH']:
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                
-                # ADDING <abbr> TAG HERE
-                param_speed = f"<abbr title='{ADJUSTED_TITLE}'>Wind Speed (Adjusted)</abbr>"
-                display_row(param_speed, f"{wind_speed_adjusted:.1f} MPH", f"≤ {LIMITS['MAX_WIND_SPEED_MPH']} MPH", icon, color)
-                
-                # 2. Wind Gust
-                if wind_gust_adjusted > LIMITS['MAX_GUST_SPEED_MPH']:
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                    
-                # ADDING <abbr> TAG HERE
-                param_gust = f"<abbr title='{ADJUSTED_TITLE}'>Wind Gust (Adjusted)</abbr>"
-                display_row(param_gust, f"{wind_gust_adjusted:.1f} MPH", f"≤ {LIMITS['MAX_GUST_SPEED_MPH']} MPH", icon, color)
-
-                # 3. Wind Direction (Info only)
-                display_row("Wind Direction", f"{wind_dir_cardinal} ({wind_dir_deg:.0f}°)", "Info (Variable)", "ℹ️", "gray")
-
-                # 4. Temperature
-                if not (LIMITS['MIN_TEMP_F'] <= temp_f <= LIMITS['MAX_TEMP_F']):
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                display_row("Temperature", f"{temp_f:.1f} °F", f"{LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} °F", icon, color)
-                
-                # 5. Visibility
-                if visibility_miles < LIMITS['MIN_VISIBILITY_MILES']:
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                display_row("Visibility", f"{visibility_miles:.1f} miles", f"≥ {LIMITS['MIN_VISIBILITY_MILES']} miles", icon, color)
-                
-                # 6. Precipitation
-                if precip_prob > LIMITS['MAX_PRECIP_PROB']:
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                display_row("Precipitation Risk", f"{precip_prob:.0f}%", f"≤ {LIMITS['MAX_PRECIP_PROB']}% (No water)", icon, color)
-                
-                # 7. Kp Index (GPS)
-                if kp_index > LIMITS['MAX_KP_INDEX']:
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                display_row("Kp Index (GPS Risk)", f"{kp_index:.1f}", f"≤ {LIMITS['MAX_KP_INDEX']} Kp", icon, color)
-                
-                # 8. Daylight Status
-                if not is_daylight:
-                    icon, color = "❌", "red"
-                else:
-                    icon, color = "✅", "green"
-                display_row("Daylight Status", "Daytime" if is_daylight else "Nighttime", "Daylight Only", icon, color)
-                
-                # 9. Weather Station (Info only)
-                display_row("Weather Station", f"{station_name} [{icao_code}]", "NWS Data Source", "ℹ️", "gray")
+                # RENDER THE HTML TABLE (Streamlit's fastest and most consistent table method for mobile)
+                st.markdown(styled_html_table, unsafe_allow_html=True)
 
                 st.markdown("---")
+                # Removed the complex date/time calculation from the table and put it here:
                 st.markdown(f"**☀️ Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
 
                 if all_reasons:
