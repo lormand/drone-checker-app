@@ -3,7 +3,6 @@ import requests
 import json
 from datetime import datetime
 import pytz
-import pandas as pd
 from streamlit_geolocation import streamlit_geolocation 
 
 # --- CONFIGURATION (Mavic 3 Pro Limits) ---
@@ -20,7 +19,6 @@ LIMITS = {
 }
 
 # NOTE: Set your local timezone for accurate daylight calculations!
-# Example: 'America/New_York', 'America/Los_Angeles', 'Europe/London'
 LOCAL_TIMEZONE = 'America/Chicago' 
 
 # --- Utility Functions ---
@@ -28,7 +26,6 @@ LOCAL_TIMEZONE = 'America/Chicago'
 def degrees_to_cardinal(deg):
     """Converts wind degrees (0-360) to a cardinal direction (N, NE, SW, etc.)."""
     dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
-    # Divide the 360 degrees into 16 sections (22.5 degrees per section)
     ix = round(deg / (360. / len(dirs)))
     return dirs[ix % len(dirs)]
 
@@ -62,7 +59,7 @@ def fetch_sunrise_sunset(lat, lon):
         
         return sunrise_local, sunset_local, is_daylight
         
-    except Exception as e:
+    except:
         # Fallback to a safe, fixed placeholder if the API fails
         st.warning(f"Sunrise/Sunset API failed. Using fixed 06:00-19:00 window.")
         sunrise_ph = datetime(2000, 1, 1, 6, 0).time() 
@@ -103,29 +100,27 @@ def fetch_metar_data(icao_code):
         temp_c = data['temperature']['value']
         temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0
 
-        # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED HERE)
-        # NWS data is typically in m/s. 1 m/s = 2.23694 MPH.
-        WIND_CONV_FACTOR = 2.23694
-
-        # Get the raw values, default to 0 if None
+        # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED)
+        WIND_CONV_FACTOR = 2.23694 # 1 m/s = 2.23694 MPH
+        
         wind_speed_ms = data['windSpeed']['value'] if data['windSpeed']['value'] is not None else 0
         wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
-
-        # *** CRITICAL FIX FOR 10X ERROR ***
-        # Divide the raw m/s value by 10 to correct the over-reporting.
+        
+        # *** CRITICAL FIX FOR 10X ERROR (36.2 MPH vs 3.4 MPH) ***
+        # Divide the raw m/s value by 10 to correct the observed over-reporting.
         wind_speed_ms_corrected = wind_speed_ms / 10.0
         wind_gust_ms_corrected = wind_gust_ms / 10.0
-
+        
         wind_speed_mph = wind_speed_ms_corrected * WIND_CONV_FACTOR 
         wind_gust_mph = wind_gust_ms_corrected * WIND_CONV_FACTOR
-
+        
         wind_dir_deg = data['windDirection']['value'] if data['windDirection']['value'] is not None else 0
 
         # 3. Visibility: Meters to Miles
         visibility_meters = data['visibility']['value']
         visibility_miles = visibility_meters / 1609.34 if visibility_meters is not None else 10.0
 
-        # 4. Precipitation Check (simplified from text description)
+        # 4. Precipitation Check
         present_weather = data['textDescription'] if data.get('textDescription') else ""
         precip_risk = 100 if any(word in present_weather.lower() for word in ['rain', 'snow', 'drizzle', 'thunder', 'fog']) else 0
         
@@ -153,7 +148,6 @@ def fetch_kp_index():
         response.raise_for_status()
         data = response.json()
         
-        # Iterate backward through the data to find the most recent 'observed' Kp value.
         for row in reversed(data[1:]): 
             time_tag, kp_value_str, status, noaa_scale = row
             
@@ -168,10 +162,8 @@ def fetch_kp_index():
 def check_airspace(lat, lon):
     """
     Provides a CRITICAL warning for manual airspace check, as free APIs are unreliable/unavailable.
-    This check intentionally fails to force manual pilot verification.
+    This check intentionally returns a warning to force manual pilot verification.
     """
-    # NOTE: The previous API failed. It is safer to force a manual check than rely on a broken free service.
-    
     reasons = [
         "🔴 CRITICAL SAFETY CHECK FAILED: The free Airspace Data API is currently unavailable or unstable.",
         "YOU MUST check the FAA's B4UFLY App or your LAANC provider (Aloft, Airspace Link, etc.) before flying.",
@@ -232,7 +224,6 @@ st.title("🚁 Mavic 3 Pro Flight Checker")
 st.subheader("Zero-Cost Pre-Flight Safety Check")
 st.markdown("---")
 
-# Use the custom component to get the location from the browser/phone
 location = streamlit_geolocation()
 
 if location is not None and location.get('latitude') is not None:
@@ -241,7 +232,6 @@ if location is not None and location.get('latitude') is not None:
     
     st.info(f"📍 Current Location: Latitude {lat:.4f}, Longitude {lon:.4f}")
     
-    # --- Decision Button ---
     if st.button("Run Comprehensive Flight Check", type="primary"):
         with st.spinner('Fetching NWS Weather, Kp Index, and Airspace check...'):
             
@@ -268,117 +258,63 @@ if location is not None and location.get('latitude') is not None:
                     # Combine all reasons (Weather/Kp + Airspace)
                     all_reasons = weather_reasons + airspace_reasons
                     
-                    final_status = "READY TO LAUNCH"
-                    # If EITHER weather/KP says DON'T FLY OR airspace returns a WARNING/RESTRICTED
-                    if status == "DON'T FLY" or airspace_status == "WARNING":
+                    # --- Multi-Tiered Decision Logic ---
+                    
+                    # A. Check for Physical/Weather Limit Failure (Highest Priority: RED)
+                    if status == "DON'T FLY":
                         final_status = "DON'T FLY"
+                        banner_color = "error" # RED
 
-                    # --- Display Status Ribbon ---
-                    if final_status == "READY TO LAUNCH":
-                        st.markdown(
-                            """
-                            <div style="background: linear-gradient(90deg, #00D084 0%, #00E5A0 100%); 
-                                    padding: 30px 20px; 
-                                    border-radius: 10px; 
-                                    text-align: center; 
-                                    color: white; 
-                                    font-size: 36px; 
-                                    font-weight: bold; 
-                                    margin-bottom: 20px;
-                                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                                ✅ READY TO LAUNCH
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                        st.success(f"Conditions are favorable. Weather from **{icao_code}**.")
-                        st.balloons()
+                    # B. Check for Critical Airspace Data Failure (Medium Priority: YELLOW)
+                    elif airspace_status == "WARNING":
+                        final_status = "MANUAL CHECK REQUIRED"
+                        banner_color = "warning" # YELLOW
+                        
+                    # C. All checks passed (Lowest Priority: GREEN)
                     else:
-                        st.markdown(
-                            """
-                            <div style="background: linear-gradient(90deg, #FF4757 0%, #FF6B7A 100%); 
-                                    padding: 30px 20px; 
-                                    border-radius: 10px; 
-                                    text-align: center; 
-                                    color: white; 
-                                    font-size: 36px; 
-                                    font-weight: bold; 
-                                    margin-bottom: 20px;
-                                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                                ❌ DO NOT FLY
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                        st.error(f"See reasons below.")
+                        final_status = "READY TO LAUNCH"
+                        banner_color = "success" # GREEN
+                        
+                    # --- Display Final Result ---
+                    st.header(final_status)
                     
-                    # --- Detailed Conditions Display in Table Format ---
-                    st.markdown("### 📊 Flight Conditions Report")
+                    if banner_color == "success":
+                        st.success(f"✅ GO! Conditions are favorable. Weather from **{icao_code}**.")
+                        st.balloons()
+                    elif banner_color == "warning":
+                        st.warning(f"⚠️ {final_status}: Weather is GO, but a critical safety check failed.")
+                    else:
+                        st.error(f"❌ NO GO. Check reasons below.")
                     
+                    # --- Detailed Conditions Display ---
+                    st.markdown("### Detailed Conditions")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    # Col 1: Wind and Temp
                     wind_dir_cardinal = degrees_to_cardinal(weather_data.get('wind_direction_deg', 0))
-                    wind_speed_adjusted = weather_data['wind_speed'] * LIMITS['WIND_SAFETY_BUFFER']
-                    wind_gust_adjusted = weather_data['wind_gust'] * LIMITS['WIND_SAFETY_BUFFER']
                     
-                    # Create condition data
-                    conditions_data = {
-                        "Parameter": [
-                            "Wind Speed (Adjusted)",
-                            "Wind Gust (Adjusted)",
-                            "Wind Direction",
-                            "Temperature",
-                            "Visibility",
-                            "Precipitation Risk",
-                            "Kp Index (GPS)",
-                            "Daylight Status",
-                            "Weather Station"
-                        ],
-                        "Current Value": [
-                            f"{wind_speed_adjusted:.1f} MPH",
-                            f"{wind_gust_adjusted:.1f} MPH",
-                            f"{wind_dir_cardinal} ({weather_data.get('wind_direction_deg', 0):.0f}°)",
-                            f"{weather_data['temp_f']:.1f} °F",
-                            f"{weather_data['visibility_miles']:.1f} miles",
-                            f"{weather_data['precip_prob']:.0f}%",
-                            f"{kp_index:.1f}",
-                            "✅ Daytime" if is_daylight else "🌙 Nighttime",
-                            icao_code
-                        ],
-                        "Safe Limit": [
-                            f"≤ {LIMITS['MAX_WIND_SPEED_MPH']} MPH",
-                            f"≤ {LIMITS['MAX_GUST_SPEED_MPH']} MPH",
-                            "Variable",
-                            f"{LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} °F",
-                            f"≥ {LIMITS['MIN_VISIBILITY_MILES']} miles",
-                            f"≤ {LIMITS['MAX_PRECIP_PROB']}%",
-                            f"≤ {LIMITS['MAX_KP_INDEX']} Kp",
-                            "Daylight only",
-                            "NWS Data"
-                        ],
-                        "Status": [
-                            "✅ PASS" if wind_speed_adjusted <= LIMITS['MAX_WIND_SPEED_MPH'] else "❌ FAIL",
-                            "✅ PASS" if wind_gust_adjusted <= LIMITS['MAX_GUST_SPEED_MPH'] else "❌ FAIL",
-                            "✅ INFO",
-                            "✅ PASS" if LIMITS['MIN_TEMP_F'] <= weather_data['temp_f'] <= LIMITS['MAX_TEMP_F'] else "❌ FAIL",
-                            "✅ PASS" if weather_data['visibility_miles'] >= LIMITS['MIN_VISIBILITY_MILES'] else "❌ FAIL",
-                            "✅ PASS" if weather_data['precip_prob'] <= LIMITS['MAX_PRECIP_PROB'] else "❌ FAIL",
-                            "✅ PASS" if kp_index <= LIMITS['MAX_KP_INDEX'] else "❌ FAIL",
-                            "✅ PASS" if is_daylight else "❌ FAIL",
-                            "✅ INFO"
-                        ]
-                    }
-                    
-                    import pandas as pd
-                    df_conditions = pd.DataFrame(conditions_data)
-                    
-                    st.dataframe(df_conditions, use_container_width=True, hide_index=True)
+                    col1.metric("Wind Speed (Adjusted)", 
+                                f"{weather_data['wind_speed'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", 
+                                f"({weather_data['wind_speed']:.1f} Ground)")
+                    col1.metric("Wind Gust (Adjusted)", 
+                                f"{weather_data['wind_gust'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", 
+                                f"(Max Safe: {LIMITS['MAX_GUST_SPEED_MPH']} MPH)")
+                    col1.metric("Wind Direction", wind_dir_cardinal, f"{weather_data.get('wind_direction_deg', 0)}°")
+
+                    # Col 2: Visibility, Time, Geomagnetic
+                    col2.metric("Temperature", f"{weather_data['temp_f']:.1f} °F", f"({LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} Range)")
+                    col2.metric("Visibility", f"{weather_data['visibility_miles']:.1f} Miles", f"(Min Safe: {LIMITS['MIN_VISIBILITY_MILES']} Miles)")
+                    col2.metric("Kp Index (GPS Risk)", f"{kp_index:.1f}", f"(Max Safe: {LIMITS['MAX_KP_INDEX']} Kp)")
                     
                     st.markdown("---")
-                    st.markdown(f"**☀️ Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
+                    st.markdown(f"**Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
+
 
                     if all_reasons:
                         st.markdown("### 🛑 Reasons for Grounding:")
                         for reason in all_reasons:
-                            st.warning(f"{reason}")
+                            st.warning(f"- {reason}")
                 else:
                     st.error(f"Could not retrieve detailed NWS data for {icao_code}. Try again.")
             else:
