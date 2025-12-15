@@ -87,6 +87,21 @@ def get_nearest_station_id(lat, lon):
     except:
         return None
 
+@st.cache_data(ttl=3600)
+def fetch_station_name(icao_code):
+    """Fetches the human-readable name of the weather station using its ICAO code."""
+    try:
+        station_url = f"https://api.weather.gov/stations/{icao_code}"
+        headers = {'User-Agent': 'MavicProCheckerApp (dronepilot@example.com)'}
+        response = requests.get(station_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()['properties']
+        
+        # The 'name' field is usually the full airport/station name
+        return data.get('name', 'N/A')
+    except:
+        return 'Unknown Station'
+
 @st.cache_data(ttl=300)
 def fetch_metar_data(icao_code):
     """Fetches the latest observation (METAR) from the NWS using the station ID."""
@@ -159,8 +174,6 @@ def fetch_kp_index():
         
     except:
         return 0.0
-
-# NOTE: The check_airspace function is intentionally removed to decouple the requirement.
 
 # --- CORE MAVIC 3 PRO LOGIC ---
 
@@ -239,11 +252,14 @@ if location is not None and location.get('latitude') is not None:
             # 2. Fetch Accurate Sunrise/Sunset Times
             sunrise_local, sunset_local, is_daylight = fetch_sunrise_sunset(lat, lon) 
             
-            # 3. Fetch Weather Data
+            # 3. Fetch Weather Data (Code only)
             icao_code = get_nearest_station_id(lat, lon)
             
             # --- Aggregated Logic ---
             if icao_code:
+                # 4. Fetch Station Name
+                station_name = fetch_station_name(icao_code)
+                
                 weather_data = fetch_metar_data(icao_code) or {} # Ensure weather_data is a dict even on API failure
                 
                 # Check weather and Kp limits
@@ -262,11 +278,12 @@ if location is not None and location.get('latitude') is not None:
                 # --- Display Final Result ---
                 st.header(final_status)
                 
+                # --- Display Status with Station Name ---
                 if banner_color == "success":
-                    st.success(f"✅ GO! Conditions are favorable. Weather from **{icao_code}**.")
+                    st.success(f"✅ GO! Conditions are favorable. Weather from **{station_name} [{icao_code}]**.")
                     st.balloons()
                 else:
-                    st.error(f"❌ NO GO. Check reasons below.")
+                    st.error(f"❌ NO GO. Check reasons below. Weather from **{station_name} [{icao_code}]**.")
                 
                 # --- Persistent Airspace Warning ---
                 st.warning("⚠️ CRITICAL REMINDER: Airspace authorization is required. You MUST check the official **Air Control** app or LAANC provider (Aloft, Airspace Link, etc.) before flying.")
@@ -357,7 +374,7 @@ if location is not None and location.get('latitude') is not None:
                 display_row("Daylight Status", "Daytime" if is_daylight else "Nighttime", "Daylight Only", icon, color)
                 
                 # 9. Weather Station (Info only)
-                display_row("Weather Station", icao_code, "NWS Data Source", "ℹ️", "gray")
+                display_row("Weather Station", f"{station_name} [{icao_code}]", "NWS Data Source", "ℹ️", "gray")
 
                 st.markdown("---")
                 st.markdown(f"**☀️ Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
