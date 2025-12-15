@@ -2,3 +2,5 @@ streamlit
 requests
 pytz
 streamlit-geolocation
+
+pandas

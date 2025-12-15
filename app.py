@@ -3,6 +3,7 @@ import requests
 import json
 from datetime import datetime
 import pytz
+import pandas as pd
 from streamlit_geolocation import streamlit_geolocation 
 
 # --- CONFIGURATION (Mavic 3 Pro Limits) ---
@@ -272,43 +273,112 @@ if location is not None and location.get('latitude') is not None:
                     if status == "DON'T FLY" or airspace_status == "WARNING":
                         final_status = "DON'T FLY"
 
-                    # --- Display Final Result ---
-                    st.header(final_status)
+                    # --- Display Status Ribbon ---
                     if final_status == "READY TO LAUNCH":
-                        st.success(f"✅ GO! Conditions are favorable. Weather from **{icao_code}**.")
+                        st.markdown(
+                            """
+                            <div style="background: linear-gradient(90deg, #00D084 0%, #00E5A0 100%); 
+                                    padding: 30px 20px; 
+                                    border-radius: 10px; 
+                                    text-align: center; 
+                                    color: white; 
+                                    font-size: 36px; 
+                                    font-weight: bold; 
+                                    margin-bottom: 20px;
+                                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                                ✅ READY TO LAUNCH
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        st.success(f"Conditions are favorable. Weather from **{icao_code}**.")
                         st.balloons()
                     else:
-                        st.error(f"❌ NO GO. Check reasons below.")
+                        st.markdown(
+                            """
+                            <div style="background: linear-gradient(90deg, #FF4757 0%, #FF6B7A 100%); 
+                                    padding: 30px 20px; 
+                                    border-radius: 10px; 
+                                    text-align: center; 
+                                    color: white; 
+                                    font-size: 36px; 
+                                    font-weight: bold; 
+                                    margin-bottom: 20px;
+                                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                                ❌ DO NOT FLY
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        st.error(f"See reasons below.")
                     
-                    # --- Detailed Conditions Display ---
-                    st.markdown("### Detailed Conditions")
+                    # --- Detailed Conditions Display in Table Format ---
+                    st.markdown("### 📊 Flight Conditions Report")
                     
-                    col1, col2 = st.columns(2)
-                    
-                    # Col 1: Wind and Temp
                     wind_dir_cardinal = degrees_to_cardinal(weather_data.get('wind_direction_deg', 0))
+                    wind_speed_adjusted = weather_data['wind_speed'] * LIMITS['WIND_SAFETY_BUFFER']
+                    wind_gust_adjusted = weather_data['wind_gust'] * LIMITS['WIND_SAFETY_BUFFER']
                     
-                    col1.metric("Wind Speed (Adjusted)", 
-                                f"{weather_data['wind_speed'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", 
-                                f"({weather_data['wind_speed']:.1f} Ground)")
-                    col1.metric("Wind Gust (Adjusted)", 
-                                f"{weather_data['wind_gust'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", 
-                                f"(Max Safe: {LIMITS['MAX_GUST_SPEED_MPH']} MPH)")
-                    col1.metric("Wind Direction", wind_dir_cardinal, f"{weather_data.get('wind_direction_deg', 0)}°")
-
-                    # Col 2: Visibility, Time, Geomagnetic
-                    col2.metric("Temperature", f"{weather_data['temp_f']:.1f} °F", f"({LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} Range)")
-                    col2.metric("Visibility", f"{weather_data['visibility_miles']:.1f} Miles", f"(Min Safe: {LIMITS['MIN_VISIBILITY_MILES']} Miles)")
-                    col2.metric("Kp Index (GPS Risk)", f"{kp_index:.1f}", f"(Max Safe: {LIMITS['MAX_KP_INDEX']} Kp)")
+                    # Create condition data
+                    conditions_data = {
+                        "Parameter": [
+                            "Wind Speed (Adjusted)",
+                            "Wind Gust (Adjusted)",
+                            "Wind Direction",
+                            "Temperature",
+                            "Visibility",
+                            "Precipitation Risk",
+                            "Kp Index (GPS)",
+                            "Daylight Status",
+                            "Weather Station"
+                        ],
+                        "Current Value": [
+                            f"{wind_speed_adjusted:.1f} MPH",
+                            f"{wind_gust_adjusted:.1f} MPH",
+                            f"{wind_dir_cardinal} ({weather_data.get('wind_direction_deg', 0):.0f}°)",
+                            f"{weather_data['temp_f']:.1f} °F",
+                            f"{weather_data['visibility_miles']:.1f} miles",
+                            f"{weather_data['precip_prob']:.0f}%",
+                            f"{kp_index:.1f}",
+                            "✅ Daytime" if is_daylight else "🌙 Nighttime",
+                            icao_code
+                        ],
+                        "Safe Limit": [
+                            f"≤ {LIMITS['MAX_WIND_SPEED_MPH']} MPH",
+                            f"≤ {LIMITS['MAX_GUST_SPEED_MPH']} MPH",
+                            "Variable",
+                            f"{LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} °F",
+                            f"≥ {LIMITS['MIN_VISIBILITY_MILES']} miles",
+                            f"≤ {LIMITS['MAX_PRECIP_PROB']}%",
+                            f"≤ {LIMITS['MAX_KP_INDEX']} Kp",
+                            "Daylight only",
+                            "NWS Data"
+                        ],
+                        "Status": [
+                            "✅ PASS" if wind_speed_adjusted <= LIMITS['MAX_WIND_SPEED_MPH'] else "❌ FAIL",
+                            "✅ PASS" if wind_gust_adjusted <= LIMITS['MAX_GUST_SPEED_MPH'] else "❌ FAIL",
+                            "✅ INFO",
+                            "✅ PASS" if LIMITS['MIN_TEMP_F'] <= weather_data['temp_f'] <= LIMITS['MAX_TEMP_F'] else "❌ FAIL",
+                            "✅ PASS" if weather_data['visibility_miles'] >= LIMITS['MIN_VISIBILITY_MILES'] else "❌ FAIL",
+                            "✅ PASS" if weather_data['precip_prob'] <= LIMITS['MAX_PRECIP_PROB'] else "❌ FAIL",
+                            "✅ PASS" if kp_index <= LIMITS['MAX_KP_INDEX'] else "❌ FAIL",
+                            "✅ PASS" if is_daylight else "❌ FAIL",
+                            "✅ INFO"
+                        ]
+                    }
+                    
+                    import pandas as pd
+                    df_conditions = pd.DataFrame(conditions_data)
+                    
+                    st.dataframe(df_conditions, use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
-                    st.markdown(f"**Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
-
+                    st.markdown(f"**☀️ Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
 
                     if all_reasons:
                         st.markdown("### 🛑 Reasons for Grounding:")
                         for reason in all_reasons:
-                            st.warning(f"- {reason}")
+                            st.warning(f"{reason}")
                 else:
                     st.error(f"Could not retrieve detailed NWS data for {icao_code}. Try again.")
             else:
