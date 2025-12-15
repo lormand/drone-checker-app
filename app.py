@@ -8,7 +8,7 @@ from streamlit_geolocation import streamlit_geolocation
 # --- CONFIGURATION (Mavic 3 Pro Limits) ---
 
 LIMITS = {
-    'MAX_WIND_SPEED_MPH': 27.0,     # Max continuous wind speed
+    'MAX_WIND_SPEED_MPH': 27.0,     # Max continuous wind speed.
     'MAX_GUST_SPEED_MPH': 30.0,
     'MIN_TEMP_F': 14.0,             # -10°C
     'MAX_TEMP_F': 104.0,            # 40°C
