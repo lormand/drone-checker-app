@@ -184,8 +184,12 @@ if location is not None and location.get('latitude') is not None:
     st.info(f"📍 Location Found: Latitude {lat:.4f}, Longitude {lon:.4f}")
     
     # --- Decision Button ---
-    if st.button("Run Flight Check", type="primary"):
+# --- Decision Button ---
+if st.button("Run Flight Check", type="primary"):
+    # This line executes if the button is clicked.
     with st.spinner('Fetching nearest airport METAR and running checks...'):
+        
+        # All lines below here are inside the spinner block.
         
         # 1. Fetch Kp Index (New call)
         kp_index = fetch_kp_index()
@@ -203,29 +207,33 @@ if location is not None and location.get('latitude') is not None:
                 
                 # 4. Update the call to check_flight_status to accept Kp
                 status, reasons = check_flight_status(weather_data)
-                    
-                    st.header(status)
-                    if status == "READY TO LAUNCH":
-                        st.success(f"✅ {status} - Weather from **{icao_code}**")
-                        st.balloons()
-                    else:
-                        st.error(f"❌ {status} - Weather from **{icao_code}**")
-                    
-                    st.markdown("### Detailed Conditions")
-                    col1, col2 = st.columns(2)
-                    col1.metric("Wind Speed (Adjusted)", f"{weather_data['wind_speed'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", f"({weather_data['wind_speed']:.1f} Ground)")
-                    col1.metric("Wind Gust (Adjusted)", f"{weather_data['wind_gust'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", f"(Max Safe: {LIMITS['MAX_GUST_SPEED_MPH']} MPH)")
-                    col2.metric("Temperature", f"{weather_data['temp_f']:.1f} °F", f"({LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} Range)")
-                    col2.metric("Visibility", f"{weather_data['visibility_miles']:.1f} Miles", f"(Min Safe: {LIMITS['MIN_VISIBILITY_MILES']} Miles)")
-                    
-                    if reasons:
-                        st.markdown("### 🛑 Reasons to Ground:")
-                        for reason in reasons:
-                            st.warning(f"- {reason}")
+                
+                # ... All lines below here MUST be inside the weather_data 'if' block ...
+                
+                st.header(status)
+                if status == "READY TO LAUNCH":
+                    st.success(f"✅ {status} - Weather from **{icao_code}**")
+                    st.balloons()
                 else:
-                    st.error(f"Could not retrieve detailed METAR data for {icao_code}.")
+                    st.error(f"❌ {status} - Weather from **{icao_code}**")
+                
+                st.markdown("### Detailed Conditions")
+                col1, col2 = st.columns(2)
+                col1.metric("Wind Speed (Adjusted)", f"{weather_data['wind_speed'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", f"({weather_data['wind_speed']:.1f} Ground)")
+                col1.metric("Wind Gust (Adjusted)", f"{weather_data['wind_gust'] * LIMITS['WIND_SAFETY_BUFFER']:.1f} MPH", f"(Max Safe: {LIMITS['MAX_GUST_SPEED_MPH']} MPH)")
+                col2.metric("Temperature", f"{weather_data['temp_f']:.1f} °F", f"({LIMITS['MIN_TEMP_F']} - {LIMITS['MAX_TEMP_F']} Range)")
+                col2.metric("Visibility", f"{weather_data['visibility_miles']:.1f} Miles", f"(Min Safe: {LIMITS['MIN_VISIBILITY_MILES']} Miles)")
+                
+                if reasons:
+                    st.markdown("### 🛑 Reasons to Ground:")
+                    for reason in reasons:
+                        st.warning(f"- {reason}")
             else:
-                st.warning("Could not find a nearby weather-reporting airport.")
+                st.error(f"Could not retrieve detailed METAR data for {icao_code}.")
+        else:
+            st.warning("Could not find a nearby weather-reporting airport.")
+            
+# The following lines are outside the button/spinner block (which is correct)
 else:
     st.info("Click the button below to allow the app to access your location.")
     # Streamlit geolocation button is hidden until the user clicks an interactive element
