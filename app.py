@@ -99,6 +99,32 @@ def fetch_metar_data(icao_code):
 # NOTE: You will also need to re-integrate the Kp index fetch (which is also free).
 
 # --- CORE MAVIC 3 PRO LOGIC (Simplified from previous response) ---
+def fetch_kp_index():
+    """Fetches the latest estimated Kp Index from the GFZ (free, no key)."""
+    print("--- Fetching Geomagnetic Data (Kp Index) ---")
+    # GFZ provides real-time Kp estimates in an accessible JSON format
+    kp_url = "https://kp.gfz.de/app/json/nowcast-kp-index"
+    
+    try:
+        response = requests.get(kp_url)
+        response.raise_for_status()
+        data = response.json()
+        
+        # The data is an array of [time, Kp_value]. We want the last, most recent value.
+        if data and 'data' in data and data['data']:
+            # Kp values are often represented in thirds (e.g., 5- = 4.7, 5 = 5.0, 5+ = 5.3).
+            # The JSON array returns the raw number (e.g., 47 for 4 2/3).
+            # We divide by 10 to get the standard decimal value.
+            latest_kp_raw = data['data'][-1][1] 
+            latest_kp = latest_kp_raw / 10.0
+            print(f"   -> Latest Kp Index Found: {latest_kp}")
+            return latest_kp
+
+        return 0.0 # Default to calm if data is missing
+    except Exception as e:
+        st.warning(f"Error fetching Kp Index: {e}. Defaulting to Kp 0.0.")
+        return 0.0
+
 def check_flight_status(weather_data):
     reasons_to_ground = []
     
