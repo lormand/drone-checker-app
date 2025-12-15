@@ -102,15 +102,12 @@ def fetch_metar_data(icao_code):
         temp_f = (temp_c * 9/5) + 32 if temp_c is not None else 60.0
 
         # 2. Wind Speed and Gust: m/s to MPH (CORRECTION APPLIED)
-        # NWS data is typically in m/s. 1 m/s = 2.23694 MPH.
-        WIND_CONV_FACTOR = 2.23694
-
-        # Get the raw values, default to 0 if None exists
+        WIND_CONV_FACTOR = 2.23694 # 1 m/s = 2.23694 MPH
+        
         wind_speed_ms = data['windSpeed']['value'] if data['windSpeed']['value'] is not None else 0
         wind_gust_ms = data['windGust']['value'] if data['windGust']['value'] is not None else wind_speed_ms
         
-        # *** CRITICAL FIX FOR 10X ERROR (36.2 MPH vs 3.4 MPH) ***
-        # Divide the raw m/s value by 10 to correct the observed over-reporting.
+        # *** CRITICAL FIX FOR 10X ERROR ***
         wind_speed_ms_corrected = wind_speed_ms / 10.0
         wind_gust_ms_corrected = wind_gust_ms / 10.0
         
@@ -306,6 +303,7 @@ if location is not None and location.get('latitude') is not None:
                             "Precipitation Risk",
                             "Kp Index (GPS)",
                             "Daylight Status",
+                            "Airspace Check", # NEW: Airspace row added
                             "Weather Station"
                         ],
                         "Current Value": [
@@ -317,6 +315,7 @@ if location is not None and location.get('latitude') is not None:
                             f"{weather_data['precip_prob']:.0f}%",
                             f"{kp_index:.1f}",
                             "✅ Daytime" if is_daylight else "🌙 Nighttime",
+                            airspace_status, # NEW: Airspace status
                             icao_code
                         ],
                         "Safe Limit": [
@@ -328,23 +327,42 @@ if location is not None and location.get('latitude') is not None:
                             f"≤ {LIMITS['MAX_PRECIP_PROB']}%",
                             f"≤ {LIMITS['MAX_KP_INDEX']} Kp",
                             "Daylight only",
+                            "No TFR/Controlled Airspace", # NEW: Airspace limit
                             "NWS Data"
                         ],
                         "Status": [
-                            "✅ PASS" if wind_speed_adjusted <= LIMITS['MAX_WIND_SPEED_MPH'] else "❌ FAIL",
-                            "✅ PASS" if wind_gust_adjusted <= LIMITS['MAX_GUST_SPEED_MPH'] else "❌ FAIL",
+                            "❌ FAIL" if wind_speed_adjusted > LIMITS['MAX_WIND_SPEED_MPH'] else "✅ PASS",
+                            "❌ FAIL" if wind_gust_adjusted > LIMITS['MAX_GUST_SPEED_MPH'] else "✅ PASS",
                             "✅ INFO",
-                            "✅ PASS" if LIMITS['MIN_TEMP_F'] <= weather_data['temp_f'] <= LIMITS['MAX_TEMP_F'] else "❌ FAIL",
-                            "✅ PASS" if weather_data['visibility_miles'] >= LIMITS['MIN_VISIBILITY_MILES'] else "❌ FAIL",
-                            "✅ PASS" if weather_data['precip_prob'] <= LIMITS['MAX_PRECIP_PROB'] else "❌ FAIL",
-                            "✅ PASS" if kp_index <= LIMITS['MAX_KP_INDEX'] else "❌ FAIL",
-                            "✅ PASS" if is_daylight else "❌ FAIL",
+                            "❌ FAIL" if not (LIMITS['MIN_TEMP_F'] <= weather_data['temp_f'] <= LIMITS['MAX_TEMP_F']) else "✅ PASS",
+                            "❌ FAIL" if weather_data['visibility_miles'] < LIMITS['MIN_VISIBILITY_MILES'] else "✅ PASS",
+                            "❌ FAIL" if weather_data['precip_prob'] > LIMITS['MAX_PRECIP_PROB'] else "✅ PASS",
+                            "❌ FAIL" if kp_index > LIMITS['MAX_KP_INDEX'] else "✅ PASS",
+                            "❌ FAIL" if not is_daylight else "✅ PASS",
+                            "⚠️ WARNING" if airspace_status == "WARNING" else "✅ PASS", # NEW: Airspace status check
                             "✅ INFO"
                         ]
                     }
 
                     df_conditions = pd.DataFrame(conditions_data)
-                    st.dataframe(df_conditions, use_container_width=True, hide_index=True)
+                    
+                    # Apply custom styling to highlight failures and warnings
+                    def highlight_status(row):
+                        """Highlights the row based on the Status column."""
+                        if '❌ FAIL' in row['Status']:
+                            return ['background-color: #ffe6e6'] * len(row) # Light Red
+                        elif '⚠️ WARNING' in row['Status']:
+                             return ['background-color: #fff9e6'] * len(row) # Light Yellow
+                        elif '✅ PASS' in row['Status']:
+                             return ['background-color: #e6fff2'] * len(row) # Light Green
+                        return [''] * len(row) # No style for INFO
+
+                    # Apply the style and render the dataframe
+                    st.dataframe(
+                        df_conditions.style.apply(highlight_status, axis=1),
+                        use_container_width=True, 
+                        hide_index=True
+                    )
 
                     st.markdown("---")
                     st.markdown(f"**☀️ Sunlight Window:** {sunrise_local.strftime('%I:%M %p')} to {sunset_local.strftime('%I:%M %p')} ({LOCAL_TIMEZONE} Time)")
